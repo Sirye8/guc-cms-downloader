@@ -1,6 +1,6 @@
 // content_script.js (v2.0 - VoD Buttons Removed)
 
-console.log("GUC CMS Downloader content script loaded - v2.1");
+console.log("GUC CMS Downloader content script loaded - v2.1.1");
 
 // sanitizeFilename, getAbsoluteUrl - (Same as v1.11)
 // extractItemDetails - (Will still identify VoDs but no dacastContentId needed if not used)

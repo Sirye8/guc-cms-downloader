@@ -1,0 +1,31 @@
+{
+  "manifest_version": 2,
+  "name": "GUC CMS Downloader",
+  "version": "1.1",
+  "description": "Downloads files from GUC CMS with correct names, adds video download buttons, and provides bulk download options (excluding videos).",
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "https://cms.guc.edu.eg/apps/student/CourseViewStn.aspx*"
+  ],
+  "background": {
+    "scripts": ["background_script.js"],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://cms.guc.edu.eg/apps/student/CourseViewStn.aspx*"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "guc-cms-downloader@Sirye8.github.io"
+    }
+  }
+}

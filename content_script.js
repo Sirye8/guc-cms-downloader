@@ -21,7 +21,7 @@ function getAbsoluteUrl(hrefOrDataUrl) {
     return `https://cms.guc.edu.eg/${hrefOrDataUrl}`;
 }
 
-function extractItemDetails(itemElement, weekInfo) {
+function extractItemDetails(itemElement, weekInfo) { // itemElement is the correct input parameter
   const titleDiv = itemElement.querySelector('div[id^="content"]');
   let originalDownloadLinkElement = itemElement.querySelector('a.btn.btn-primary.contentbtn[id="download"]');
   const originalWatchVideoButton = itemElement.querySelector('input.btn.btn-primary.vodbutton.contentbtn[value="Watch Video"]');
@@ -29,7 +29,7 @@ function extractItemDetails(itemElement, weekInfo) {
   if (!titleDiv) { return null; }
 
   let isVod = false;
-  let downloadUrl; // Will be null for VoDs if we don't use their direct links
+  let downloadUrl; 
 
   let rawTitleFromStrong = ""; 
   const strongTag = titleDiv.querySelector('strong');
@@ -38,15 +38,10 @@ function extractItemDetails(itemElement, weekInfo) {
 
   if (originalWatchVideoButton && (!originalDownloadLinkElement || getComputedStyle(originalDownloadLinkElement).display === 'none')) {
     isVod = true;
-    // For VoDs, we are no longer attempting to use their direct download links from the extension
     downloadUrl = null; 
-    // console.log(`VoD ("${rawTitleFromStrong}"): Identified. Download via extension disabled.`);
   } else if (originalDownloadLinkElement && originalDownloadLinkElement.hasAttribute('href')) {
     downloadUrl = getAbsoluteUrl(originalDownloadLinkElement.getAttribute('href'));
   } else { return null; }
-
-  // If it's a VoD, downloadUrl will be null, so no download will be attempted by the extension.
-  // If it's not a VoD but has no valid link, it would have returned null earlier.
 
   let itemType = "";
   if (strongTag) {
@@ -74,14 +69,13 @@ function extractItemDetails(itemElement, weekInfo) {
   const sanitizedFilenamePart = sanitizeFilename(finalCleanedTitleForFilename);
   let extension = ".file"; 
   
-  if (downloadUrl) { // Only attempt to get extension if there's a downloadUrl (i.e., not a VoD handled by us)
+  if (downloadUrl) { 
     const originalFilenameFromServer = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1).split('?')[0];
     let extPart = originalFilenameFromServer.substring(originalFilenameFromServer.lastIndexOf('.'));
     if (extPart.includes('.')) { extension = extPart; }
   } else if (isVod) {
-      extension = ".mp4"; // Still good to have a nominal extension for VoD items for consistency if data structure needs it
+      extension = ".mp4"; 
   }
-
 
   if (extension === ".file" && !isVod && itemType.includes('project')) { extension = ".pdf"; } 
   else if (extension === ".file" && !isVod && (itemType.includes('lecture') || itemType.includes('tutorial')) && downloadUrl && (downloadUrl.includes('.ppt') || downloadUrl.includes('.pptx')) ) {
@@ -93,14 +87,18 @@ function extractItemDetails(itemElement, weekInfo) {
     originalTitle: titleDiv.textContent.trim(),
     cleanedTitleForFilter: baseTitle.toLowerCase(), 
     itemType: itemType,
-    url: downloadUrl, // Will be null for VoDs the extension won't try to download
+    url: downloadUrl, 
     filename: filename,
     isVod: isVod
   };
 
   return {
-      dataForDownload: dataForDownload, // For background script IF we were to send, or for filtering
-      domElements: { originalDownloadLinkElement, originalWatchVideoButton, itemRowElement }
+      dataForDownload: dataForDownload, 
+      domElements: { 
+          originalDownloadLinkElement, 
+          originalWatchVideoButton,  
+          itemRowElement: itemElement // CORRECTED: Use the input parameter name
+      }
   };
 }
 

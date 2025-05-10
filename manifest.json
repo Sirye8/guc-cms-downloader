@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "GUC CMS Downloader",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Downloads files from GUC CMS with correct names, adds video download buttons, and provides bulk download options (excluding videos).",
   "permissions": [
     "activeTab",

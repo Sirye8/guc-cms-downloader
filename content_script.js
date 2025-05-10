@@ -1,12 +1,4 @@
-// content_script.js (v2.0 - VoD Buttons Removed)
-
-console.log("GUC CMS Downloader content script loaded - v2.1.1");
-
-// sanitizeFilename, getAbsoluteUrl - (Same as v1.11)
-// extractItemDetails - (Will still identify VoDs but no dacastContentId needed if not used)
-// requestSingleDownload, requestBulkDownload - (Same as v1.11, but won't be called for VoD by new buttons)
-// processWeeks - (MAJOR CHANGE: Will not add any new buttons for VoD items)
-// addGlobalBulkButtons, init, observer - (Same as v1.11)
+console.log("CMS Downloader content script loaded - v2.1.2");
 
 function sanitizeFilename(name) {
   let sane = name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim();
@@ -21,65 +13,87 @@ function getAbsoluteUrl(hrefOrDataUrl) {
     return `https://cms.guc.edu.eg/${hrefOrDataUrl}`;
 }
 
-function extractItemDetails(itemElement, weekInfo) { // itemElement is the correct input parameter
+function extractItemDetails(itemElement, weekInfo) {
   const titleDiv = itemElement.querySelector('div[id^="content"]');
-  let originalDownloadLinkElement = itemElement.querySelector('a.btn.btn-primary.contentbtn[id="download"]');
-  const originalWatchVideoButton = itemElement.querySelector('input.btn.btn-primary.vodbutton.contentbtn[value="Watch Video"]');
+  const downloadButtonAnchor = itemElement.querySelector('a.btn.btn-primary.contentbtn[id="download"]');
+  const watchVideoButtonInput = itemElement.querySelector('input.btn.btn-primary.vodbutton.contentbtn[value="Watch Video"]');
 
   if (!titleDiv) { return null; }
 
-  let isVod = false;
-  let downloadUrl; 
-
-  let rawTitleFromStrong = ""; 
-  const strongTag = titleDiv.querySelector('strong');
-  if(strongTag) { rawTitleFromStrong = strongTag.textContent.trim(); } 
-  else { rawTitleFromStrong = titleDiv.textContent.trim(); }
-
-  if (originalWatchVideoButton && (!originalDownloadLinkElement || getComputedStyle(originalDownloadLinkElement).display === 'none')) {
-    isVod = true;
-    downloadUrl = null; 
-  } else if (originalDownloadLinkElement && originalDownloadLinkElement.hasAttribute('href')) {
-    downloadUrl = getAbsoluteUrl(originalDownloadLinkElement.getAttribute('href'));
-  } else { return null; }
-
+  // --- Determine if this is a VoD item based on visible "Watch Video" button ---
+  // --- or if the "Download Content" link is explicitly hidden ---
+  let isLikelyVoD = false;
+  if (watchVideoButtonInput && getComputedStyle(watchVideoButtonInput).display !== 'none') {
+    isLikelyVoD = true;
+  }
+  if (downloadButtonAnchor && getComputedStyle(downloadButtonAnchor).display === 'none' && watchVideoButtonInput) {
+    // If download link is hidden and there's a watch button, it's definitely a VoD for our purposes
+    isLikelyVoD = true;
+  }
+  
   let itemType = "";
+  let rawTitleFromStrong = "";
+  const strongTag = titleDiv.querySelector('strong');
+
   if (strongTag) {
+    rawTitleFromStrong = strongTag.textContent.trim();
     let currentNode = strongTag.nextSibling;
     while (currentNode) {
       if (currentNode.nodeType === Node.TEXT_NODE && currentNode.textContent.trim() !== "") {
         const typeMatch = currentNode.textContent.trim().match(/\(([^)]+)\)/);
-        if (typeMatch && typeMatch[1]) { itemType = typeMatch[1].toLowerCase().trim(); if (itemType === "vod" && !isVod) { isVod = true; }}
+        if (typeMatch && typeMatch[1]) { itemType = typeMatch[1].toLowerCase().trim(); }
         break;
       }
       currentNode = currentNode.nextSibling;
     }
+  } else {
+    rawTitleFromStrong = titleDiv.textContent.trim();
   }
-  if(isVod && !itemType && titleDiv.textContent.toLowerCase().includes('(vod)')){ itemType = "vod"; }
 
+  // If itemType explicitly says "vod", then it IS a VoD.
+  if (itemType.includes("vod")) {
+    isLikelyVoD = true;
+  }
+
+  // --- IF IT'S A VOD, IGNORE IT COMPLETELY FOR THE EXTENSION ---
+  if (isLikelyVoD) {
+    console.log(`extractItemDetails: Item "${rawTitleFromStrong}" identified as VoD. Skipping.`);
+    return null; // Skip this item entirely
+  }
+
+  // --- If it's NOT a VoD, proceed to get download URL and details ---
+  // At this point, we expect downloadButtonAnchor to be valid and visible
+  if (!downloadButtonAnchor || getComputedStyle(downloadButtonAnchor).display === 'none' || !downloadButtonAnchor.hasAttribute('href')) {
+    console.warn(`extractItemDetails: Non-VoD item "${rawTitleFromStrong}" is missing a visible download link or href. Skipping.`);
+    return null; // Skip if no valid download link for a non-VoD
+  }
+
+  const downloadUrl = getAbsoluteUrl(downloadButtonAnchor.getAttribute('href'));
+  if (!downloadUrl) {
+    console.warn(`extractItemDetails: Non-VoD item "${rawTitleFromStrong}" produced a null URL. Skipping.`);
+    return null;
+  }
+
+  // --- Filename Generation ---
   let baseTitle = rawTitleFromStrong.replace(/^\d+\s*-\s*/, '').trim();
   let finalCleanedTitleForFilename;
-  const isLecture = itemType.includes('lecture') || baseTitle.toLowerCase().startsWith('lecture');
-  const isTutorial = itemType.includes('tutorial') || baseTitle.toLowerCase().startsWith('tutorial');
+  const isLectureType = itemType.includes('lecture') || baseTitle.toLowerCase().startsWith('lecture');
+  const isTutorialType = itemType.includes('tutorial') || baseTitle.toLowerCase().startsWith('tutorial');
 
-  if (isLecture) { const match = baseTitle.match(/^(lecture)\s*(\d+)/i); if (match) { finalCleanedTitleForFilename = `Lecture ${match[2]}`; } else { finalCleanedTitleForFilename = baseTitle; }} 
-  else if (isTutorial) { const match = baseTitle.match(/^(tutorial)\s*(\d+)/i); if (match) { finalCleanedTitleForFilename = `Tutorial ${match[2]}`; } else { finalCleanedTitleForFilename = baseTitle; }} 
+  if (isLectureType) { const match = baseTitle.match(/^(lecture)\s*(\d+)/i); if (match) { finalCleanedTitleForFilename = `Lecture ${match[2]}`; } else { finalCleanedTitleForFilename = baseTitle; }} 
+  else if (isTutorialType) { const match = baseTitle.match(/^(tutorial)\s*(\d+)/i); if (match) { finalCleanedTitleForFilename = `Tutorial ${match[2]}`; } else { finalCleanedTitleForFilename = baseTitle; }} 
   else { finalCleanedTitleForFilename = baseTitle; }
   
   const sanitizedFilenamePart = sanitizeFilename(finalCleanedTitleForFilename);
-  let extension = ".file"; 
+  const originalFilenameFromServer = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1).split('?')[0];
+  let extension = originalFilenameFromServer.substring(originalFilenameFromServer.lastIndexOf('.'));
   
-  if (downloadUrl) { 
-    const originalFilenameFromServer = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1).split('?')[0];
-    let extPart = originalFilenameFromServer.substring(originalFilenameFromServer.lastIndexOf('.'));
-    if (extPart.includes('.')) { extension = extPart; }
-  } else if (isVod) {
-      extension = ".mp4"; 
-  }
-
-  if (extension === ".file" && !isVod && itemType.includes('project')) { extension = ".pdf"; } 
-  else if (extension === ".file" && !isVod && (itemType.includes('lecture') || itemType.includes('tutorial')) && downloadUrl && (downloadUrl.includes('.ppt') || downloadUrl.includes('.pptx')) ) {
-    if(downloadUrl.includes('.pptx')) extension = ".pptx"; else if(downloadUrl.includes('.ppt')) extension = ".ppt";
+  if (!extension.includes('.')) { extension = ".file"; }
+  if (extension === ".file") { // More specific extension guessing if needed
+      if (itemType.includes('project')) { extension = ".pdf"; } 
+      else if ((itemType.includes('lecture') || itemType.includes('tutorial')) && (downloadUrl.includes('.ppt') || downloadUrl.includes('.pptx')) ) {
+        if(downloadUrl.includes('.pptx')) extension = ".pptx"; else if(downloadUrl.includes('.ppt')) extension = ".ppt";
+      }
   }
   const filename = `${sanitizedFilenamePart}${extension}`;
 
@@ -89,58 +103,46 @@ function extractItemDetails(itemElement, weekInfo) { // itemElement is the corre
     itemType: itemType,
     url: downloadUrl, 
     filename: filename,
-    isVod: isVod
+    isVod: false // Will always be false if we reach here
   };
 
   return {
       dataForDownload: dataForDownload, 
       domElements: { 
-          originalDownloadLinkElement, 
-          originalWatchVideoButton,  
-          itemRowElement: itemElement // CORRECTED: Use the input parameter name
+          originalDownloadLinkElement: downloadButtonAnchor, 
+          // originalWatchVideoButton is not needed if we fully ignore VoDs for modification
+          itemRowElement: itemElement
       }
   };
 }
 
-// requestSingleDownload: Will only be called for non-VoD items from modified event listeners
 async function requestSingleDownload(itemDataForDownload) {
-  if (itemDataForDownload.isVod || !itemDataForDownload.url) {
-      // This case should ideally not be hit by direct calls from new buttons
-      // if VoD buttons are removed and URL check is done before calling.
-      console.warn(`Content: requestSingleDownload called for VoD or null URL. Filename: ${itemDataForDownload.filename}. This download will be skipped by the extension.`);
-      return; 
-  }
+  // This function is now only called for non-VoD items with valid URLs
   console.log(`Content: Requesting single download for ${itemDataForDownload.filename}`);
   try {
     const response = await browser.runtime.sendMessage({
       action: "downloadFile",
       url: itemDataForDownload.url,
       filename: itemDataForDownload.filename,
-      isVod: itemDataForDownload.isVod // Should be false here
+      isVod: false 
     });
     if (response && response.success) { console.log(`Content: Single download initiated for ${itemDataForDownload.filename}`); } 
     else { console.error(`Content: Single download failed for ${itemDataForDownload.filename}. Response:`, response); }
   } catch (error) { console.error(`Content: Error sending single download message for ${itemDataForDownload.filename}:`, error); }
 }
 
-// requestBulkDownload: The items array will already have VoDs filtered out by processWeeks
 async function requestBulkDownload(itemsDataForDownload, description) {
+  // itemsDataForDownload here should already contain only non-VoD items
   if (itemsDataForDownload.length === 0) { alert(`No files to download for: ${description}`); return; }
   alert(`Starting bulk download for ${itemsDataForDownload.length} files: ${description}.`); 
   console.log(`Content: Requesting bulk download for ${itemsDataForDownload.length} items: ${description}`);
   try {
-    // Filter out VoDs one last time, just in case, though they shouldn't be in itemsDataForDownload for bulk
-    const nonVodItems = itemsDataForDownload.filter(item => !item.isVod && item.url);
-    if (nonVodItems.length === 0) {
-        alert(`No downloadable non-video files found for: ${description}`);
-        return;
-    }
     const response = await browser.runtime.sendMessage({
       action: "bulkDownloadFiles",
-      items: nonVodItems.map(item => ({ 
+      items: itemsDataForDownload.map(item => ({ // Ensure we only send what background needs
           url: item.url,
           filename: item.filename,
-          isVod: item.isVod // Will be false
+          isVod: item.isVod // will be false
       }))
     });
     if (response && response.success) { console.log(`Content: Bulk download request sent for "${description}". Background script processing.`); } 
@@ -148,45 +150,44 @@ async function requestBulkDownload(itemsDataForDownload, description) {
   } catch (error) { console.error(`Content: Error sending bulk download message for "${description}":`, error); alert(`Error occurred when trying to start bulk download for "${description}".`); }
 }
 
-
 function processWeeks() {
+  console.log("processWeeks: Starting to process week blocks...");
   const weekBlocks = document.querySelectorAll('div.card.mb-5.weeksdata');
-  const allItemsDataForBulk = []; // This will ONLY store non-VoD items
+  if (weekBlocks.length === 0) { console.warn("processWeeks: No week blocks found."); return; }
+  const allItemsDataForBulk = []; 
 
   weekBlocks.forEach((weekBlock, weekIndex) => {
     const weekHeader = weekBlock.querySelector('div.card-header h2.text-big');
     let weekDateForButton = `Week ${weekIndex + 1}`;
     if (weekHeader && weekHeader.textContent) { const weekHeaderText = weekHeader.textContent.trim(); const datePart = weekHeaderText.replace('Week:', '').trim(); if (datePart) weekDateForButton = datePart; }
-    const currentWeekIdentifier = `Week_${weekDateForButton.replace(/-/g, '_')}`;
+    
     const contentItemsElements = weekBlock.querySelectorAll('div.p-3 > div:last-of-type > div.card.mb-4');
-    const itemsDataInThisWeekForBulk = []; // ONLY non-VoD items
+    const itemsDataInThisWeekForBulk = []; 
 
     contentItemsElements.forEach(itemElement => {
-      const extracted = extractItemDetails(itemElement, currentWeekIdentifier);
+      const extracted = extractItemDetails(itemElement, weekDateForButton); 
+      
+      // Only proceed if extracted is not null (meaning it's a valid, non-VoD item)
       if (extracted && extracted.dataForDownload) {
-        const details = extracted.dataForDownload;
+        const details = extracted.dataForDownload; // This is a non-VoD item
         const dom = extracted.domElements;
 
-        if (details.isVod) {
-          // --- NO BUTTONS ADDED FOR VOD ITEMS ---
-          // The original "Watch Video" button remains untouched.
-          console.log(`Identified VoD: "${details.cleanedTitleForFilter}". Extension will not add download buttons.`);
-        } else { // Non-VoD file
-          // Ensure URL is present for non-VoD items we intend to download
-          if (details.url) { 
-            allItemsDataForBulk.push(details);
-            itemsDataInThisWeekForBulk.push(details);
+        allItemsDataForBulk.push(details);
+        itemsDataInThisWeekForBulk.push(details);
 
-            if (dom.downloadLinkElement && !dom.downloadLinkElement.dataset.listenerAttached) {
-              dom.downloadLinkElement.addEventListener('click', (event) => {
-                event.preventDefault();
-                requestSingleDownload(details); // This will use background for now
-              });
-              dom.downloadLinkElement.dataset.listenerAttached = "true";
-            }
-          } else {
-            console.warn(`Skipping non-VoD item "${details.cleanedTitleForFilter}" due to missing URL.`);
-          }
+        // dom.originalDownloadLinkElement should be valid here because extractItemDetails would have returned null otherwise
+        if (dom.originalDownloadLinkElement && !dom.originalDownloadLinkElement.dataset.gucCmsDownloaderListener) {
+          // console.log(`processWeeks: Attaching listener to: "${details.cleanedTitleForFilter}"`);
+          dom.originalDownloadLinkElement.addEventListener('click', function(event) { 
+            event.preventDefault();
+            event.stopPropagation(); 
+            console.log("CUSTOM CLICK LISTENER FIRED for single download:", details.filename); 
+            requestSingleDownload(details); 
+          }, true); 
+          dom.originalDownloadLinkElement.dataset.gucCmsDownloaderListener = "true";
+        } else if (!dom.originalDownloadLinkElement) {
+            // This warning should ideally not appear if extractItemDetails is correct
+            console.warn(`processWeeks: Listener not attached. No downloadLinkElement for non-VoD item: "${details.cleanedTitleForFilter}" (This indicates an issue in extractItemDetails).`);
         }
       }
     });
@@ -203,7 +204,8 @@ function processWeeks() {
       }
     }
   });
-  addGlobalBulkButtons(allItemsDataForBulk); // Pass only non-VoD items
+  addGlobalBulkButtons(allItemsDataForBulk); 
+  console.log("processWeeks: Finished processing all week blocks.");
 }
 
 // addGlobalBulkButtons (same as v1.8/1.5, it operates on nonVodItemsData)
@@ -252,9 +254,8 @@ function addGlobalBulkButtons(nonVodItemsData) {
   else if (document.querySelector('.app-page-title')) { document.querySelector('.app-page-title').parentNode.insertBefore(buttonContainer, document.querySelector('.app-page-title').nextSibling); }
 }
 
-// --- Main Execution & Observer --- (remains same)
 function init() {
-    console.log("GUC CMS Downloader: Initializing v1.12");
+    console.log("CMS Downloader: Initializing v2.1.2");
     processWeeks();
 }
 const observer = new MutationObserver((mutationsList, obs) => {

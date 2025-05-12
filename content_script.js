@@ -1,4 +1,4 @@
-console.log("CMS Downloader content script loaded - v2.1.3");
+console.log("CMS Downloader content script loaded");
 
 function sanitizeFilename(name) {
   let sane = name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim();

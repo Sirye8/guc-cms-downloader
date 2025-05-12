@@ -1,0 +1,12 @@
+{
+  "addons": {
+    "guc-cms-downloader@sirye8.github.io": {
+      "updates": [
+        {
+          "version": "2.1.3",
+          "update_link": "https://github.com/sirye8/guc-cms-downloader/releases/latest/download/guc-cms-downloader.xpi"
+        }
+      ]
+    }
+  }
+}

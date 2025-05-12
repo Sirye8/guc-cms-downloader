@@ -1,4 +1,4 @@
-console.log("CMS Downloader content script loaded - v2.1.2");
+console.log("CMS Downloader content script loaded - v2.1.3");
 
 function sanitizeFilename(name) {
   let sane = name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim();
@@ -255,7 +255,7 @@ function addGlobalBulkButtons(nonVodItemsData) {
 }
 
 function init() {
-    console.log("CMS Downloader: Initializing v2.1.2");
+    console.log("CMS Downloader: Initializing...");
     processWeeks();
 }
 const observer = new MutationObserver((mutationsList, obs) => {

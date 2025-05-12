@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "CMS Downloader",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Downloads files from GUC CMS with correct names, adds video download buttons, and provides bulk download options (excluding videos).",
   "permissions": [
     "activeTab",
@@ -25,7 +25,8 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "guc-cms-downloader@Sirye8.github.io"
+      "id": "guc-cms-downloader@Sirye8.github.io",
+      "update_url": "https://sirye8.github.io/guc-cms-downloader/updates.json"
     }
   }
 }

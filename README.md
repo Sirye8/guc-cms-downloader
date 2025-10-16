@@ -1,6 +1,6 @@
 # GUC CMS Downloader
 
-A browser extension designed to enhance the download experience on the German University in Cairo's Course Management System (CMS). This tool streamlines the process of downloading course materials by adding bulk download capabilities and improving file organization.
+A browser extension designed to enhance the download experience on the German University in Cairo's Content Management System (CMS). This tool streamlines the process of downloading course materials by adding bulk download capabilities and improving file organization.
 
 ## 🚀 Features
 

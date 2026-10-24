@@ -1,17 +1,17 @@
 # GUC CMS Downloader
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
+[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Browser Support](https://img.shields.io/badge/browsers-Firefox%20%7C%20Brave%20%7C%20Chrome-orange.svg)](https://github.com/Sirye8/guc-cms-downloader)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
 
 A browser extension to improve downloading course materials from the German University in Cairo (GUC) Content Management System (CMS).
 
-On the GUC CMS, downloaded files normally have raw server timestamps and hashes (for example `GUC_576_70_73059_2026-10-12T13_26_21.pdf`), requiring students to manually rename every single file across weekly cards. This extension automates renaming, organizes files into course and week folders, and adds bulk download tools.
+On the GUC CMS, downloaded files normally have raw server timestamps and hashes (for example `GUC_576_70_73059_2026-10-12T13_26_21.pdf`), requiring students to manually rename every single file across weekly cards. This extension automates renaming, organizes files into customizable course and week folders, and adds bulk download tools.
 
 ---
 
-## Features (v3.0)
+## Features (v3.1)
 
 ### Smart File Renaming
 - **Clean Titles**: Strips leading index numbers (`1 - `) and keeps the proper extension (`.pdf`, `.pptx`, `.docx`, `.jpg`, etc.).
@@ -19,25 +19,24 @@ On the GUC CMS, downloaded files normally have raw server timestamps and hashes 
 - **Distinguishes Materials**: Keeps distinct names for slides, notes, quizzes, and solutions in the same week (for example, `Lecture 5 Slides.pptx` vs `Lecture 5 - Example 1 Detailed Solution.pdf`).
 - **Fixes Bad Characters**: Cleans illegal filesystem characters (`< > : " / \ | ? *`) and broken encoding symbols.
 
-### Automatic Folder Hierarchy
+### Multi-Layer Folder Organization & Custom Mapping
 - Automatically reads the course code and name (e.g. `NETW903 - Network and Services`) and week date.
-- Saves files into organized subdirectories inside your Downloads folder:
-  ```text
-  Downloads/
-  └── GUC CMS/
-      ├── NETW903 - Network and Services/
-      │   ├── Week 1 (2026-09-07)/
-      │   │   ├── Lecture 1 - Network and Services Introduction.pdf
-      │   │   └── NETW903 Assessment Workload Distribution.jpg
-      │   └── Week 6 (2026-10-12)/
-      │       ├── Lecture 6 - RESTful Web Services.pdf
-      │       └── Assignment 2.pdf
-      └── NETW904 - Linear and Non-Linear Optimization/
-          └── Week 5 (2026-10-13)/
-              ├── Sheet 5 - Dual Simplex and Post Optimal Analysis.pdf
-              └── Sheet 5 Solutions.pdf
-  ```
-- **Folder Toggle**: A checkbox in the top control panel allows switching between organized folders and flat downloads at any time.
+- **Layer 1 (Main Root Folder)**: Customize the top-level folder where all subjects lie (default: `GUC CMS`, or custom like `Uni/Semester 9`, or empty for direct downloads).
+- **Layer 2 (Per-Subject Mapping)**: Map each subject to a custom folder name (e.g. `NETW903` -> `Networks`), or use the auto-generated course name.
+- **Layer 3 (Week Subfolders)**: Choose whether to create week subfolders, and select the format:
+  - `Week N (Date)` (e.g. `Week 1 (2026-09-07)`)
+  - `Week N only` (e.g. `Week 1`)
+  - `Date only` (e.g. `2026-09-07`)
+  - `Flat` (all subject files stored directly in the subject folder)
+- **Live Path Preview**: Shows a real-time preview of the exact folder path as you adjust settings.
+- **Folder Toggle**: Switch between organized folders and flat downloads with one click.
+
+### Downloaded vs Undownloaded Filtering
+- **Segmented Filter Tabs**: Filter course view between **All Files**, **Undownloaded**, and **Downloaded** with real-time counts.
+- **Download Undownloaded**: One-click bulk download for only the files you have not downloaded yet.
+- **Interactive Status Toggle**: Click the status badge on any card to mark or unmark it as downloaded.
+- **Batch Mark Actions**: Mark or unmark all selected files in one click.
+- **Persistent Memory**: Download state persists across browser sessions using local storage.
 
 ### Category Filters
 Filters course materials into dedicated bulk download groups, even if the CMS tagging is inconsistent:
@@ -52,11 +51,11 @@ Filters course materials into dedicated bulk download groups, even if the CMS ta
 - **Item Checkboxes**: Pick specific files across weeks to download only what you need.
 - **Select Week**: Check an entire week at once from the week header.
 - **Batch Controls**: Quick "Select All", "Deselect All", and "Download Selected" buttons.
+- **ASP.NET Form Protection**: Explicit button types prevent unwanted page reloads when making selections.
 
 ### Non-Blocking Progress UI
-- Replaced blocking alert dialogs with a bottom-right toast card.
+- Bottom-right floating progress toast card with live completion percentages and auto-fade.
 - Displays live download progress and current file name without freezing the page.
-- In-session badges mark items that have already been downloaded.
 
 ### Throttled Download Queue
 - Downloads sequentially with a 350ms delay between items to prevent browser download warnings or network timeouts.
@@ -65,7 +64,7 @@ Filters course materials into dedicated bulk download groups, even if the CMS ta
 
 ## Browser Support & Installation
 
-GUC CMS Downloader v3 runs on Manifest V3 and supports Firefox, Brave, and Google Chrome (as well as Edge and other Chromium-based browsers).
+GUC CMS Downloader v3.1 runs on Manifest V3 and supports Firefox, Brave, and Google Chrome (as well as Edge and other Chromium-based browsers).
 
 ### Mozilla Firefox
 
@@ -108,14 +107,18 @@ GUC CMS Downloader v3 runs on Manifest V3 and supports Firefox, Brave, and Googl
 
 1. Log into the GUC CMS: `https://cms.guc.edu.eg`
 2. Open any course page (`CourseViewStn`).
-3. The control panel will appear above the weeks with buttons to download all files, download selected files, or download by category.
-4. Single downloads: clicking the regular "Download Content" button on any item will also automatically use the clean name and course folder.
+3. The control panel will appear above the weeks:
+   - Use the **All / Undownloaded / Downloaded** tabs to view only the files you need.
+   - Click **Download Undownloaded** to grab all new files in one click.
+   - Click **Folder Options** to configure your main folder or subject-specific folder mappings with live preview.
+   - Mark or unmark files with the status toggle buttons or batch mark buttons.
+4. Single downloads: clicking the regular "Download Content" button on any item will automatically use the clean name, course folder, and mark the file as downloaded.
 
 ---
 
 ## Privacy & Permissions
 
-- Permissions used: `downloads` (to save files with custom names and folders) and `storage` (to save your folder organization preference).
+- Permissions used: `downloads` (to save files with custom names and folders) and `storage` (to save your folder organization and downloaded state).
 - Host permission: limited to `https://cms.guc.edu.eg/*`.
 - All parsing and downloads run locally inside your browser. No external tracking or telemetry.
 - Open source under GPL-3.0.

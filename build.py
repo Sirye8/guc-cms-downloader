@@ -3,7 +3,7 @@ import json
 import zipfile
 
 DIST_DIR = "dist"
-VERSION = "3.0.0"
+VERSION = "3.1.0"
 
 def create_packages():
     os.makedirs(DIST_DIR, exist_ok=True)

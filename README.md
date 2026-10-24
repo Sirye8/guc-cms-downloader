@@ -1,6 +1,6 @@
 # GUC CMS Downloader
 
-[![Version](https://img.shields.io/badge/version-3.1.0-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
+[![Version](https://img.shields.io/badge/version-3.2.0-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Browser Support](https://img.shields.io/badge/browsers-Firefox%20%7C%20Brave%20%7C%20Chrome-orange.svg)](https://github.com/Sirye8/guc-cms-downloader)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
@@ -11,13 +11,38 @@ On the GUC CMS, downloaded files normally have raw server timestamps and hashes 
 
 ---
 
-## Features (v3.1)
+## Features (v3.2)
 
 ### Smart File Renaming
-- **Clean Titles**: Strips leading index numbers (`1 - `) and keeps the proper extension (`.pdf`, `.pptx`, `.docx`, `.jpg`, etc.).
+- **Clean Titles**: Strips leading index numbers (`1 - `) and keeps the proper extension (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.zip`, `.rar`, etc.).
 - **Preserves Full Topics**: Keeps descriptive subtitles instead of cutting everything to `Lecture 1.pdf` (for example, `Lecture 1 - Fundamentals of Layering & Node Connections.pdf`).
 - **Distinguishes Materials**: Keeps distinct names for slides, notes, quizzes, and solutions in the same week (for example, `Lecture 5 Slides.pptx` vs `Lecture 5 - Example 1 Detailed Solution.pdf`).
 - **Fixes Bad Characters**: Cleans illegal filesystem characters (`< > : " / \ | ? *`) and broken encoding symbols.
+
+### Clean Action Row Selection
+- **Select Next to Download**: The select button sits right next to the Mark Downloaded button on the action row, completely removing awkward checkboxes above file titles.
+- **Visual Card Highlighting**: Selected items receive an active border and soft blue card highlight.
+- **Improved Week Selector**: The "Select Week" button is positioned cleanly in the week card header opposite the week title.
+
+### Category Visibility Filters (On/Off Toggles)
+- Toggle any category on or off to dynamically show or hide materials as needed:
+  - **Lectures**
+  - **Tutorials**
+  - **Labs & Quizzes**
+  - **Sheets & Exercises**
+  - **Solutions** (Solution sheets, detailed solutions, model answers)
+  - **Assignments** (Course assignments and in-lab submissions)
+  - **Projects** (Course projects and project specifications, cleanly separated from assignments)
+  - **Other** (Supplementary notes and research articles)
+- **Quick Controls**: Includes "Show All" and "Hide All" category toggles.
+- **Download Visible**: Dedicated button to download only the currently visible files matching your active category and status filters.
+
+### Downloaded vs Undownloaded Filtering
+- **Segmented Filter Tabs**: Filter course view between **All Files**, **Undownloaded**, and **Downloaded** with real-time counts.
+- **Download Undownloaded**: One-click bulk download for only the files you have not downloaded yet.
+- **Interactive Status Toggle**: Click the status button on any card to mark or unmark it as downloaded.
+- **Batch Mark Actions**: Mark or unmark all selected files in one click.
+- **Persistent Memory**: Download state persists across browser sessions using local storage.
 
 ### Multi-Layer Folder Organization & Custom Mapping
 - Automatically reads the course code and name (e.g. `NETW903 - Network and Services`) and week date.
@@ -31,40 +56,16 @@ On the GUC CMS, downloaded files normally have raw server timestamps and hashes 
 - **Live Path Preview**: Shows a real-time preview of the exact folder path as you adjust settings.
 - **Folder Toggle**: Switch between organized folders and flat downloads with one click.
 
-### Downloaded vs Undownloaded Filtering
-- **Segmented Filter Tabs**: Filter course view between **All Files**, **Undownloaded**, and **Downloaded** with real-time counts.
-- **Download Undownloaded**: One-click bulk download for only the files you have not downloaded yet.
-- **Interactive Status Toggle**: Click the status badge on any card to mark or unmark it as downloaded.
-- **Batch Mark Actions**: Mark or unmark all selected files in one click.
-- **Persistent Memory**: Download state persists across browser sessions using local storage.
-
-### Category Filters
-Filters course materials into dedicated bulk download groups, even if the CMS tagging is inconsistent:
-- **Lectures** (Slides and lecture notes)
-- **Tutorials** (Tutorial notes and slides)
-- **Labs & Quizzes** (Lab manuals, guides, review quizzes)
-- **Sheets & Exercises** (Exercise and practice sheets)
-- **Solutions** (Solution sheets and detailed solutions)
-- **Assignments & Projects** (Coursework and project files)
-
-### Checkboxes and Batch Selection
-- **Item Checkboxes**: Pick specific files across weeks to download only what you need.
-- **Select Week**: Check an entire week at once from the week header.
-- **Batch Controls**: Quick "Select All", "Deselect All", and "Download Selected" buttons.
-- **ASP.NET Form Protection**: Explicit button types prevent unwanted page reloads when making selections.
-
 ### Non-Blocking Progress UI
 - Bottom-right floating progress toast card with live completion percentages and auto-fade.
 - Displays live download progress and current file name without freezing the page.
-
-### Throttled Download Queue
 - Downloads sequentially with a 350ms delay between items to prevent browser download warnings or network timeouts.
 
 ---
 
 ## Browser Support & Installation
 
-GUC CMS Downloader v3.1 runs on Manifest V3 and supports Firefox, Brave, and Google Chrome (as well as Edge and other Chromium-based browsers).
+GUC CMS Downloader v3.2 runs on Manifest V3 and supports Firefox, Brave, and Google Chrome (as well as Edge and other Chromium-based browsers).
 
 ### Mozilla Firefox
 
@@ -109,9 +110,10 @@ GUC CMS Downloader v3.1 runs on Manifest V3 and supports Firefox, Brave, and Goo
 2. Open any course page (`CourseViewStn`).
 3. The control panel will appear above the weeks:
    - Use the **All / Undownloaded / Downloaded** tabs to view only the files you need.
-   - Click **Download Undownloaded** to grab all new files in one click.
+   - Use the **Category Visibility Filters** to show or hide lectures, tutorials, assignments, projects, sheets, or solutions.
+   - Click **Download Undownloaded** or **Download Visible** to grab your filtered files in one click.
    - Click **Folder Options** to configure your main folder or subject-specific folder mappings with live preview.
-   - Mark or unmark files with the status toggle buttons or batch mark buttons.
+   - Select files using the clean "Select" button on each card or "Select Week" in the week header.
 4. Single downloads: clicking the regular "Download Content" button on any item will automatically use the clean name, course folder, and mark the file as downloaded.
 
 ---

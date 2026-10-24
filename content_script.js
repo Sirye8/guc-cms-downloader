@@ -1,5 +1,5 @@
 // content_script.js
-// GUC CMS Downloader v3.1.0
+// GUC CMS Downloader v3.2.0
 console.log("GUC CMS Downloader content script loaded");
 
 const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
@@ -7,6 +7,7 @@ const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser
 // --- Storage Keys ---
 const STORAGE_KEY_DOWNLOADED = 'guc_cms_downloaded_items_v2';
 const STORAGE_KEY_FOLDER_SETTINGS = 'guc_cms_folder_settings_v2';
+const STORAGE_KEY_CATEGORY_FILTERS = 'guc_cms_category_filters_v2';
 
 // --- Folder Organization Settings ---
 function getDefaultFolderSettings() {
@@ -85,7 +86,7 @@ function sanitizePath(pathStr) {
   if (!pathStr) return "";
   return pathStr
     .split('/')
-    .map(segment => segment.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim())
+    .map(segment => segment.replace(/[<>:"/\\|?*]/g, '_').trim())
     .filter(Boolean)
     .join('/');
 }
@@ -105,7 +106,7 @@ function cleanTitle(rawTitle) {
     .replace(/\s*_\s*/g, ' - ');
 
   // 3. Separate words glued to digits (e.g., "Lecture5" -> "Lecture 5", "Sheet1" -> "Sheet 1")
-  title = title.replace(/\b(Lecture|Lectures|Tutorial|Tutorials|Sheet|Sheets|Lab|Labs|Quiz|Quizzes|Assignment|Assignments|Example)(\d+)\b/gi, '$1 $2');
+  title = title.replace(/\b(Lecture|Lectures|Tutorial|Tutorials|Sheet|Sheets|Lab|Labs|Quiz|Quizzes|Assignment|Assignments|Example|Project|Exam)(\d+)\b/gi, '$1 $2');
 
   // 4. Fix numbers glued together with ampersand like "9&10" -> "9 & 10"
   title = title.replace(/(\d+)&(\d+)/g, '$1 & $2');
@@ -114,7 +115,7 @@ function cleanTitle(rawTitle) {
   title = title.replace(/([a-z])([A-Z])/g, '$1 $2');
   title = title.replace(/(\d+)([A-Za-z])/g, '$1 $2');
 
-  // 6. Normalize spaced hyphens (leave intra-word hyphens like In-Lecture untouched)
+  // 6. Normalize spaced hyphens (leave intra-word hyphens like In-lab untouched)
   title = title.replace(/\s+-\s*|\s*-\s+/g, ' - ');
   title = title.replace(/(\s*-\s*)+/g, ' - ');
 
@@ -138,6 +139,7 @@ function generateCleanFilename(rawTitle, itemType, downloadUrl) {
   // Fallbacks if no valid extension
   if (!extension || extension === ".file" || extension.length > 5) {
     const it = (itemType || "").toLowerCase();
+    const bt = baseTitle.toLowerCase();
     if (it.includes('project') || it.includes('assignment') || it.includes('sheet') || it.includes('exercise')) {
       extension = ".pdf";
     } else if (it.includes('lecture') || it.includes('tutorial')) {
@@ -167,6 +169,66 @@ function getAbsoluteUrl(hrefOrDataUrl) {
   return `https://cms.guc.edu.eg/${hrefOrDataUrl}`;
 }
 
+// --- Category Classification Engine ---
+function isSolutionItem(title, itemType) {
+  const t = (title || "").toLowerCase();
+  const it = (itemType || "").toLowerCase();
+  return (
+    t.includes('solution') ||
+    t.includes('detailedsolution') ||
+    t.includes('model answer') ||
+    it.includes('solution') ||
+    it.includes('model answer') ||
+    it.includes('quiz solution') ||
+    it.includes('exam solution')
+  );
+}
+
+function classifyItemCategory(title, itemType) {
+  const t = (title || "").toLowerCase();
+  const it = (itemType || "").toLowerCase();
+
+  // 1. Solution (takes precedence over sheet, lecture, or quiz)
+  if (isSolutionItem(t, it)) {
+    return "Solutions";
+  }
+
+  // 2. Projects (explicitly separated from Assignments)
+  if (it.includes('project') || t.includes('project')) {
+    return "Projects";
+  }
+
+  // 3. Assignments
+  if ((it.includes('assignment') || t.includes('assignment') || t.includes('in-lab')) &&
+      !t.startsWith('lecture') && !t.startsWith('tutorial')) {
+    return "Assignments";
+  }
+
+  // 4. Lectures
+  if ((it.includes('lecture') || t.startsWith('lecture') || t.startsWith('lectures')) &&
+      !t.includes('lab') && !t.includes('tutorial')) {
+    return "Lectures";
+  }
+
+  // 5. Tutorials
+  if (it.includes('tutorial') || t.startsWith('tutorial') || t.includes('tut ')) {
+    return "Tutorials";
+  }
+
+  // 6. Labs & Quizzes
+  if (it.includes('lab') || t.includes('lab') || t.includes('quiz') || t.includes('vm installation')) {
+    return "Labs & Quizzes";
+  }
+
+  // 7. Sheets & Exercises
+  if (t.includes('sheet') || it.includes('sheet') || it.includes('exercise') || t.includes('exercise')) {
+    return "Sheets & Exercises";
+  }
+
+  // 8. Other (research papers, workload distributions, schedules, etc.)
+  return "Other";
+}
+
 // --- Course & Week Metadata Extraction ---
 function extractCourseMetadata() {
   const courseLabel = document.getElementById('ContentPlaceHolderright_ContentPlaceHoldercontent_LabelCourseName');
@@ -178,7 +240,6 @@ function extractCourseMetadata() {
 
   if (courseLabel && courseLabel.textContent) {
     const rawCourse = courseLabel.textContent.trim();
-    // Pattern: "(|NETW903|) Network and Services (576)"
     const match = rawCourse.match(/\(\|([A-Z0-9]+)\|\)\s*([^(]+)/i);
     if (match) {
       courseCode = match[1].trim();
@@ -264,7 +325,6 @@ function buildDownloadPath(item) {
     } else if (settings.weekFormat === "none") {
       weekFolder = "";
     } else {
-      // Default: "week_and_date"
       weekFolder = item.weekTitle || `Week ${item.weekNumber}`;
     }
 
@@ -333,11 +393,13 @@ function extractItemDetails(itemElement, weekInfo, courseMeta) {
 
   const cleanFileBase = generateCleanFilename(rawTitleFromStrong, itemType, downloadUrl);
   const cleanedTitleForFilter = cleanTitle(rawTitleFromStrong).toLowerCase();
+  const category = classifyItemCategory(cleanedTitleForFilter, itemType);
 
   return {
     rawTitle: rawTitleFromStrong,
     cleanedTitleForFilter: cleanedTitleForFilter,
     itemType: itemType,
+    category: category,
     url: downloadUrl,
     filename: cleanFileBase,
     courseCode: courseMeta.courseCode,
@@ -448,7 +510,7 @@ async function requestSingleDownload(item) {
   const finalPath = buildDownloadPath(item);
   showToast("Starting Download", item.filename, null, false, false);
   setItemDownloaded(item.url, true, item.filename);
-  updateItemStatusUI(item);
+  updateItemCardButtons(item);
   refreshFilterCountsAndViews();
 
   try {
@@ -478,7 +540,7 @@ async function requestBulkDownload(items, description) {
   // Mark all as downloaded in local storage
   items.forEach(it => {
     setItemDownloaded(it.url, true, it.filename);
-    updateItemStatusUI(it);
+    updateItemCardButtons(it);
   });
   refreshFilterCountsAndViews();
 
@@ -511,14 +573,55 @@ async function requestBulkDownload(items, description) {
   }
 }
 
-// --- Item UI: Status Badge & Checkbox ---
-function updateItemStatusUI(item) {
+// --- Card Buttons: Select Button & Download Status Toggle ---
+// Injects the Select button right on the action row to the left of Mark Downloaded
+function updateItemCardButtons(item) {
   const row = item.domElements.itemRowElement;
   if (!row) return;
 
-  const isDownloaded = isItemDownloaded(item.url);
-  let statusBtn = row.querySelector('.guc-status-toggle-btn');
+  const dlAnchor = item.domElements.downloadButtonAnchor;
+  if (!dlAnchor || !dlAnchor.parentNode) return;
+  const parentContainer = dlAnchor.parentNode;
 
+  // 1. Select File Button (placed on the action row)
+  let selectBtn = parentContainer.querySelector('.guc-select-toggle-btn');
+  if (!selectBtn) {
+    selectBtn = document.createElement('button');
+    selectBtn.type = 'button';
+    selectBtn.className = 'btn btn-sm guc-select-toggle-btn ml-2';
+    selectBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const isCurrentlySelected = selectedItemUrls.has(item.url);
+      if (isCurrentlySelected) {
+        selectedItemUrls.delete(item.url);
+        row.classList.remove('guc-item-card-selected');
+      } else {
+        selectedItemUrls.add(item.url);
+        row.classList.add('guc-item-card-selected');
+      }
+      updateItemCardButtons(item);
+      updateSelectedCountUI();
+      updateAllWeekSelectButtons();
+    });
+    parentContainer.appendChild(selectBtn);
+  }
+
+  const isSelected = selectedItemUrls.has(item.url);
+  if (isSelected) {
+    selectBtn.className = 'btn btn-sm btn-primary guc-select-toggle-btn ml-2';
+    selectBtn.innerHTML = '<i class="fa fa-check-square mr-1"></i> Selected';
+    selectBtn.title = 'Click to deselect';
+    row.classList.add('guc-item-card-selected');
+  } else {
+    selectBtn.className = 'btn btn-sm btn-outline-secondary guc-select-toggle-btn ml-2';
+    selectBtn.innerHTML = '<i class="fa fa-square-o mr-1"></i> Select';
+    selectBtn.title = 'Select this file';
+    row.classList.remove('guc-item-card-selected');
+  }
+
+  // 2. Download Status Toggle Button (placed to the right of Select)
+  let statusBtn = parentContainer.querySelector('.guc-status-toggle-btn');
   if (!statusBtn) {
     statusBtn = document.createElement('button');
     statusBtn.type = 'button';
@@ -528,16 +631,13 @@ function updateItemStatusUI(item) {
       e.stopPropagation();
       const currentStatus = isItemDownloaded(item.url);
       setItemDownloaded(item.url, !currentStatus, item.filename);
-      updateItemStatusUI(item);
+      updateItemCardButtons(item);
       refreshFilterCountsAndViews();
     });
-
-    const dlAnchor = item.domElements.downloadButtonAnchor;
-    if (dlAnchor && dlAnchor.parentNode) {
-      dlAnchor.parentNode.appendChild(statusBtn);
-    }
+    parentContainer.appendChild(statusBtn);
   }
 
+  const isDownloaded = isItemDownloaded(item.url);
   if (isDownloaded) {
     statusBtn.className = 'btn btn-sm btn-success guc-status-toggle-btn ml-2';
     statusBtn.innerHTML = '<i class="fa fa-check mr-1"></i> Downloaded';
@@ -553,6 +653,18 @@ function updateItemStatusUI(item) {
 let allDiscoveredItems = [];
 const selectedItemUrls = new Set();
 let currentFilterView = 'all'; // 'all' | 'undownloaded' | 'downloaded'
+
+// Category Visibility Filter State (all ON by default)
+const activeCategoryFilters = {
+  "Lectures": true,
+  "Tutorials": true,
+  "Labs & Quizzes": true,
+  "Sheets & Exercises": true,
+  "Solutions": true,
+  "Assignments": true,
+  "Projects": true,
+  "Other": true
+};
 
 function updateSelectedCountUI() {
   const countSpan = document.querySelector('.guc-selected-count');
@@ -572,23 +684,29 @@ function updateSelectedCountUI() {
   }
 }
 
-function onItemCheckboxChanged(item, isChecked) {
-  const card = item.domElements.itemRowElement;
-  if (isChecked) {
-    selectedItemUrls.add(item.url);
-    if (card) card.classList.add('guc-item-card-selected');
-  } else {
-    selectedItemUrls.delete(item.url);
-    if (card) card.classList.remove('guc-item-card-selected');
-  }
-  updateSelectedCountUI();
+function updateAllWeekSelectButtons() {
+  document.querySelectorAll('div.card.mb-5.weeksdata').forEach(weekBlock => {
+    const weekItems = allDiscoveredItems.filter(it => it.domElements.itemRowElement.closest('.weeksdata') === weekBlock);
+    const weekSelectBtn = weekBlock.querySelector('.guc-week-select-btn');
+    if (!weekSelectBtn || weekItems.length === 0) return;
+
+    const allSelected = weekItems.every(it => selectedItemUrls.has(it.url));
+    if (allSelected) {
+      weekSelectBtn.className = 'btn btn-sm btn-primary guc-week-select-btn mr-2';
+      weekSelectBtn.innerHTML = '<i class="fa fa-check-square mr-1"></i> Week Selected';
+    } else {
+      weekSelectBtn.className = 'btn btn-sm btn-outline-secondary guc-week-select-btn mr-2';
+      weekSelectBtn.innerHTML = '<i class="fa fa-square-o mr-1"></i> Select Week';
+    }
+  });
 }
 
-// --- Filter Views (All / Undownloaded / Downloaded) ---
+// --- Filter Views & Category Toggles ---
 function refreshFilterCountsAndViews() {
   const downloadedMap = getDownloadedMap();
   let downloadedCount = 0;
   let undownloadedCount = 0;
+  let visibleCount = 0;
 
   allDiscoveredItems.forEach(item => {
     const isDl = Boolean(downloadedMap[item.url]);
@@ -598,13 +716,20 @@ function refreshFilterCountsAndViews() {
     const row = item.domElements.itemRowElement;
     if (!row) return;
 
-    let visible = true;
+    // Check 1: Downloaded / Undownloaded filter
+    let passesStatus = true;
     if (currentFilterView === 'undownloaded' && isDl) {
-      visible = false;
+      passesStatus = false;
     } else if (currentFilterView === 'downloaded' && !isDl) {
-      visible = false;
+      passesStatus = false;
     }
+
+    // Check 2: Category Visibility filter
+    const passesCategory = activeCategoryFilters[item.category] !== false;
+
+    const visible = passesStatus && passesCategory;
     row.style.display = visible ? '' : 'none';
+    if (visible) visibleCount++;
   });
 
   // Check week blocks: if all items inside are hidden, hide the week block
@@ -622,33 +747,58 @@ function refreshFilterCountsAndViews() {
   const countUndl = document.querySelector('.guc-count-undownloaded');
   const countDl = document.querySelector('.guc-count-downloaded');
   const btnUndlCount = document.querySelector('.guc-undownloaded-btn-count');
+  const btnVisibleCount = document.querySelector('.guc-visible-btn-count');
 
   if (countAll) countAll.textContent = allDiscoveredItems.length;
   if (countUndl) countUndl.textContent = undownloadedCount;
   if (countDl) countDl.textContent = downloadedCount;
   if (btnUndlCount) btnUndlCount.textContent = undownloadedCount;
+  if (btnVisibleCount) btnVisibleCount.textContent = visibleCount;
 
-  // Toggle active tab appearance
+  // Toggle active tab appearance (clean separated pills)
   ['all', 'undownloaded', 'downloaded'].forEach(view => {
     const tab = document.getElementById(`guc-tab-${view}`);
     if (tab) {
       if (currentFilterView === view) {
-        tab.className = 'btn btn-primary btn-sm font-weight-bold guc-tab-btn';
+        tab.className = 'btn btn-sm guc-tab-btn guc-tab-active';
       } else {
-        tab.className = 'btn btn-outline-secondary btn-sm guc-tab-btn';
+        tab.className = 'btn btn-sm guc-tab-btn guc-tab-inactive';
       }
     }
   });
 
-  // Enable/disable Download Undownloaded button
+  // Update Category Toggle Chip UI
+  document.querySelectorAll('.guc-cat-toggle-chip').forEach(chip => {
+    const cat = chip.dataset.cat;
+    const isActive = activeCategoryFilters[cat] !== false;
+    const catCount = allDiscoveredItems.filter(it => it.category === cat).length;
+
+    if (isActive) {
+      chip.className = 'btn btn-sm guc-cat-toggle-chip guc-cat-chip-active mr-2 mb-2';
+      chip.innerHTML = `<i class="fa fa-check mr-1"></i> ${cat} <span class="badge badge-light border ml-1">${catCount}</span>`;
+      chip.title = `Click to hide ${cat}`;
+    } else {
+      chip.className = 'btn btn-sm guc-cat-toggle-chip guc-cat-chip-inactive mr-2 mb-2';
+      chip.innerHTML = `<i class="fa fa-eye-slash mr-1"></i> ${cat} <span class="badge badge-secondary ml-1">${catCount}</span>`;
+      chip.title = `Click to show ${cat}`;
+    }
+  });
+
+  // Enable/disable Download Undownloaded & Visible buttons
   const undlBtn = document.getElementById('guc-download-undownloaded-btn');
-  if (undlBtn) {
-    undlBtn.disabled = undownloadedCount === 0;
-  }
+  if (undlBtn) undlBtn.disabled = undownloadedCount === 0;
+
+  const visBtn = document.getElementById('guc-download-visible-btn');
+  if (visBtn) visBtn.disabled = visibleCount === 0;
 }
 
 function setFilterView(view) {
   currentFilterView = view;
+  refreshFilterCountsAndViews();
+}
+
+function toggleCategoryFilter(cat) {
+  activeCategoryFilters[cat] = !activeCategoryFilters[cat];
   refreshFilterCountsAndViews();
 }
 
@@ -664,6 +814,9 @@ function processWeeks() {
   const courseMeta = extractCourseMetadata();
   allDiscoveredItems = [];
 
+  // Remove any legacy header bar checkboxes if previously injected
+  document.querySelectorAll('.guc-card-header-bar, .guc-checkbox-wrapper').forEach(el => el.remove());
+
   weekBlocks.forEach((weekBlock, weekIndex) => {
     const weekInfo = extractWeekFolder(weekBlock, weekIndex);
 
@@ -677,34 +830,8 @@ function processWeeks() {
       allDiscoveredItems.push(details);
       itemsInThisWeek.push(details);
 
-      // Initialize status badge
-      updateItemStatusUI(details);
-
-      // Inject clean card header bar with checkbox
-      const body = itemElement.querySelector('.card-body');
-      if (body && !body.querySelector('.guc-card-header-bar')) {
-        const headerBar = document.createElement('div');
-        headerBar.className = 'guc-card-header-bar d-flex justify-content-between align-items-center mb-2 pb-1 border-bottom';
-        headerBar.innerHTML = `
-          <label class="guc-checkbox-custom-label d-flex align-items-center mb-0" style="cursor: pointer; user-select: none;">
-            <input type="checkbox" class="guc-item-select-checkbox mr-2">
-            <span class="small font-weight-bold text-secondary">Select File</span>
-          </label>
-          <span class="badge badge-light border text-muted" style="font-size: 11px;">${details.itemType || 'Material'}</span>
-        `;
-        const cb = headerBar.querySelector('input');
-        cb.checked = selectedItemUrls.has(details.url);
-        if (cb.checked) {
-          itemElement.classList.add('guc-item-card-selected');
-        }
-
-        cb.addEventListener('change', (e) => {
-          onItemCheckboxChanged(details, e.target.checked);
-        });
-
-        // Insert neatly at top of card body
-        body.insertBefore(headerBar, body.firstChild);
-      }
+      // Initialize the action row buttons (Select & Mark Downloaded)
+      updateItemCardButtons(details);
 
       // Intercept original download link
       const dlLink = details.domElements.downloadButtonAnchor;
@@ -718,56 +845,66 @@ function processWeeks() {
       }
     });
 
-    // Inject Week Header Controls
+    // Inject Week Header Controls with improved location & flex styling
     if (itemsInThisWeek.length > 0) {
-      const weekHeader = weekBlock.querySelector('div.card-header h2.text-big');
-      if (weekHeader) {
-        const buttonHost = weekHeader.closest('.card-header').querySelector('.col-lg-6.col-md-6.col-sm-12:last-child .menu-header-title.text-right');
-        if (buttonHost && !buttonHost.querySelector('.guc-week-controls-wrapper')) {
-          const wrapper = document.createElement('div');
-          wrapper.className = 'guc-week-controls-wrapper d-inline-flex align-items-center';
+      const cardHeader = weekBlock.querySelector('div.card-header');
+      if (cardHeader && !cardHeader.querySelector('.guc-week-header-actions')) {
+        // Apply flex layout to card-header so title and buttons sit cleanly on opposite sides
+        cardHeader.style.cssText = 'height: auto !important; min-height: 54px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 18px;';
 
-          // Select Week Checkbox
-          const weekCbLabel = document.createElement('label');
-          weekCbLabel.className = 'mb-0 mr-3 small text-muted font-weight-normal';
-          weekCbLabel.style.cursor = 'pointer';
-          weekCbLabel.innerHTML = `<input type="checkbox" class="guc-week-select-all mr-1" style="vertical-align: middle;"> Select Week`;
-          const weekCb = weekCbLabel.querySelector('input');
-          weekCb.addEventListener('change', (e) => {
-            const checked = e.target.checked;
-            itemsInThisWeek.forEach(it => {
-              const rowCb = it.domElements.itemRowElement.querySelector('.guc-item-select-checkbox');
-              if (rowCb) rowCb.checked = checked;
-              onItemCheckboxChanged(it, checked);
-            });
+        const actionsWrapper = document.createElement('div');
+        actionsWrapper.className = 'guc-week-header-actions d-flex align-items-center flex-wrap mt-2 mt-md-0';
+        actionsWrapper.style.cssText = 'gap: 8px;';
+
+        // Select Week Button
+        const weekSelectBtn = document.createElement('button');
+        weekSelectBtn.type = 'button';
+        weekSelectBtn.className = 'btn btn-sm btn-outline-secondary guc-week-select-btn mr-2';
+        weekSelectBtn.innerHTML = '<i class="fa fa-square-o mr-1"></i> Select Week';
+        weekSelectBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const allSelected = itemsInThisWeek.every(it => selectedItemUrls.has(it.url));
+          itemsInThisWeek.forEach(it => {
+            if (allSelected) {
+              selectedItemUrls.delete(it.url);
+            } else {
+              selectedItemUrls.add(it.url);
+            }
+            updateItemCardButtons(it);
           });
-          wrapper.appendChild(weekCbLabel);
+          updateSelectedCountUI();
+          updateAllWeekSelectButtons();
+        });
+        actionsWrapper.appendChild(weekSelectBtn);
 
-          // Download Week Button
-          const bulkWeekButton = document.createElement('button');
-          bulkWeekButton.type = 'button';
-          bulkWeekButton.textContent = `Download Week Files (${itemsInThisWeek.length})`;
-          bulkWeekButton.className = 'btn btn-success btn-sm mb-2 guc-download-week-button';
-          bulkWeekButton.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            requestBulkDownload(itemsInThisWeek, weekInfo.weekTitle);
-          });
-          wrapper.appendChild(bulkWeekButton);
+        // Download Week Button
+        const bulkWeekButton = document.createElement('button');
+        bulkWeekButton.type = 'button';
+        bulkWeekButton.className = 'btn btn-sm btn-success guc-download-week-button';
+        bulkWeekButton.innerHTML = `<i class="fa fa-download mr-1"></i> Download Week (${itemsInThisWeek.length})`;
+        bulkWeekButton.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          requestBulkDownload(itemsInThisWeek, weekInfo.weekTitle);
+        });
+        actionsWrapper.appendChild(bulkWeekButton);
 
-          buttonHost.innerHTML = '';
-          buttonHost.appendChild(wrapper);
-        }
+        // Clear any old buttons in the secondary column and append to card-header
+        const oldHost = cardHeader.querySelector('.menu-header-title.text-right');
+        if (oldHost) oldHost.innerHTML = '';
+        cardHeader.appendChild(actionsWrapper);
       }
     }
   });
 
   addGlobalBulkPanel(allDiscoveredItems, courseMeta);
   updateSelectedCountUI();
+  updateAllWeekSelectButtons();
   refreshFilterCountsAndViews();
 }
 
-// --- Global Bulk Download Panel with Multi-Layer Folder Mapping ---
+// --- Global Bulk Download Panel ---
 function addGlobalBulkPanel(allItems, courseMeta) {
   if (allItems.length === 0) return;
 
@@ -791,6 +928,14 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     ? settings.subjectMappings[courseKey]
     : courseMeta.defaultFolder;
 
+  // Extract all unique categories present in this course
+  const uniqueCategories = [];
+  ["Lectures", "Tutorials", "Labs & Quizzes", "Sheets & Exercises", "Solutions", "Assignments", "Projects", "Other"].forEach(cat => {
+    if (allItems.some(it => it.category === cat)) {
+      uniqueCategories.push(cat);
+    }
+  });
+
   const panel = document.createElement('div');
   panel.className = 'card guc-global-bulk-panel';
 
@@ -798,14 +943,14 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     <div class="guc-panel-header">
       <div class="guc-panel-title">
         <i class="fa fa-download mr-2"></i> GUC CMS Downloader
-        <span class="guc-badge-ver">v3.1</span>
+        <span class="guc-badge-ver">v3.2</span>
         <span class="badge badge-secondary ml-2 font-weight-normal">${courseMeta.courseCode}</span>
       </div>
-      <div class="d-flex align-items-center flex-wrap mt-2 mt-md-0">
-        <button type="button" class="btn btn-outline-light btn-sm mr-2 py-1 px-2" id="guc-toggle-settings-btn" style="font-size: 12px;">
+      <div class="d-flex align-items-center flex-wrap mt-2 mt-md-0" style="gap: 8px;">
+        <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-toggle-settings-btn" style="font-size: 12px;">
           <i class="fa fa-folder-open mr-1"></i> Folder Options
         </button>
-        <button type="button" class="btn btn-outline-light btn-sm mr-2 py-1 px-2" id="guc-select-all-btn" style="font-size: 12px;">
+        <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-select-all-btn" style="font-size: 12px;">
           Select All
         </button>
         <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-deselect-all-btn" style="font-size: 12px;">
@@ -878,23 +1023,23 @@ function addGlobalBulkPanel(allItems, courseMeta) {
 
     <!-- Main Panel Content -->
     <div class="card-body" style="padding: 16px 20px;">
-      <!-- Segmented View Tabs (All / Undownloaded / Downloaded) -->
+      <!-- Segmented View Tabs (All / Undownloaded / Downloaded) with clean spacing -->
       <div class="d-flex justify-content-between align-items-center flex-wrap mb-3">
-        <div class="btn-group btn-group-sm mb-2 mb-md-0" role="group">
-          <button type="button" class="btn btn-primary btn-sm font-weight-bold guc-tab-btn" id="guc-tab-all">
+        <div class="d-flex align-items-center flex-wrap guc-tabs-container mb-2 mb-md-0" style="gap: 10px;">
+          <button type="button" class="btn btn-sm guc-tab-btn guc-tab-active" id="guc-tab-all">
             All Files (<span class="guc-count-all">${allItems.length}</span>)
           </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm guc-tab-btn" id="guc-tab-undownloaded">
+          <button type="button" class="btn btn-sm guc-tab-btn guc-tab-inactive" id="guc-tab-undownloaded">
             Undownloaded (<span class="guc-count-undownloaded">0</span>)
           </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm guc-tab-btn" id="guc-tab-downloaded">
+          <button type="button" class="btn btn-sm guc-tab-btn guc-tab-inactive" id="guc-tab-downloaded">
             Downloaded (<span class="guc-count-downloaded">0</span>)
           </button>
         </div>
 
         <!-- Batch Selection Actions -->
-        <div class="d-flex align-items-center">
-          <button type="button" class="btn btn-outline-success btn-sm mr-2" id="guc-mark-selected-btn">
+        <div class="d-flex align-items-center flex-wrap" style="gap: 8px;">
+          <button type="button" class="btn btn-outline-success btn-sm" id="guc-mark-selected-btn">
             <i class="fa fa-check-circle mr-1"></i> Mark Selected
           </button>
           <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-unmark-selected-btn">
@@ -903,23 +1048,46 @@ function addGlobalBulkPanel(allItems, courseMeta) {
         </div>
       </div>
 
-      <!-- Primary Action Buttons Row -->
-      <div class="d-flex align-items-center flex-wrap mb-3">
-        <button type="button" class="btn btn-success btn-sm mr-2 mb-2 font-weight-bold shadow-sm" id="guc-download-undownloaded-btn">
+      <!-- Category Visibility Filters (On/Off Toggles) -->
+      <div class="guc-category-filters-section mb-3 p-2 rounded" style="background: #f8fafc; border: 1px solid #e2e8f0;">
+        <div class="d-flex justify-content-between align-items-center flex-wrap mb-2">
+          <small class="font-weight-bold text-secondary text-uppercase" style="letter-spacing: 0.5px; font-size: 11px;">
+            <i class="fa fa-filter mr-1"></i> Category Visibility Filters (Click to Toggle On/Off):
+          </small>
+          <div>
+            <button type="button" class="btn btn-link btn-sm p-0 mr-3 text-primary" id="guc-cat-show-all" style="font-size: 11px; text-decoration: none;">Show All</button>
+            <button type="button" class="btn btn-link btn-sm p-0 text-secondary" id="guc-cat-hide-all" style="font-size: 11px; text-decoration: none;">Hide All</button>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap guc-category-chips-row" style="gap: 8px;">
+          ${uniqueCategories.map(cat => `
+            <button type="button" class="btn btn-sm guc-cat-toggle-chip guc-cat-chip-active" data-cat="${cat}">
+              <i class="fa fa-check mr-1"></i> ${cat}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- Primary Action Buttons Row with clean spacing -->
+      <div class="d-flex align-items-center flex-wrap mb-3" style="gap: 10px;">
+        <button type="button" class="btn btn-success btn-sm font-weight-bold shadow-sm" id="guc-download-undownloaded-btn">
           <i class="fa fa-arrow-circle-down mr-1"></i> Download Undownloaded (<span class="guc-undownloaded-btn-count">0</span>)
         </button>
-        <button type="button" class="btn btn-info btn-sm mr-2 mb-2 font-weight-bold shadow-sm" id="guc-download-all-btn">
+        <button type="button" class="btn btn-info btn-sm font-weight-bold shadow-sm" id="guc-download-visible-btn">
+          <i class="fa fa-filter mr-1"></i> Download Visible (<span class="guc-visible-btn-count">${allItems.length}</span>)
+        </button>
+        <button type="button" class="btn btn-outline-info btn-sm font-weight-bold shadow-sm" id="guc-download-all-btn">
           <i class="fa fa-download mr-1"></i> Download All (<span class="guc-total-count">${allItems.length}</span>)
         </button>
-        <button type="button" class="btn btn-secondary btn-sm mr-2 mb-2 font-weight-bold shadow-sm" id="guc-download-selected-btn" disabled>
+        <button type="button" class="btn btn-secondary btn-sm font-weight-bold shadow-sm" id="guc-download-selected-btn" disabled>
           <i class="fa fa-check-square-o mr-1"></i> Download Selected (<span class="guc-selected-count">${selectedItemUrls.size}</span>)
         </button>
       </div>
 
-      <!-- Categories Section -->
+      <!-- Quick Bulk Category Download Buttons -->
       <div class="guc-category-buttons-container pt-2 border-top">
-        <small class="text-muted d-block mb-2 font-weight-bold">Download by Category:</small>
-        <div class="guc-categories-row d-flex flex-wrap"></div>
+        <small class="text-muted d-block mb-2 font-weight-bold">Download Full Category:</small>
+        <div class="guc-categories-row d-flex flex-wrap" style="gap: 8px;"></div>
       </div>
     </div>
   `;
@@ -1025,6 +1193,29 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     setFilterView('downloaded');
   });
 
+  // --- Category Toggle Chips ---
+  panel.querySelectorAll('.guc-cat-toggle-chip').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleCategoryFilter(chip.dataset.cat);
+    });
+  });
+
+  panel.querySelector('#guc-cat-show-all').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uniqueCategories.forEach(cat => { activeCategoryFilters[cat] = true; });
+    refreshFilterCountsAndViews();
+  });
+
+  panel.querySelector('#guc-cat-hide-all').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uniqueCategories.forEach(cat => { activeCategoryFilters[cat] = false; });
+    refreshFilterCountsAndViews();
+  });
+
   // --- Select / Deselect All ---
   panel.querySelector('#guc-select-all-btn').addEventListener('click', (e) => {
     e.preventDefault();
@@ -1033,13 +1224,11 @@ function addGlobalBulkPanel(allItems, courseMeta) {
       // Only select visible items if filtered
       if (it.domElements.itemRowElement.style.display !== 'none') {
         selectedItemUrls.add(it.url);
-        const cb = it.domElements.itemRowElement.querySelector('.guc-item-select-checkbox');
-        if (cb) cb.checked = true;
-        it.domElements.itemRowElement.classList.add('guc-item-card-selected');
+        updateItemCardButtons(it);
       }
     });
-    document.querySelectorAll('.guc-week-select-all').forEach(cb => cb.checked = true);
     updateSelectedCountUI();
+    updateAllWeekSelectButtons();
   });
 
   panel.querySelector('#guc-deselect-all-btn').addEventListener('click', (e) => {
@@ -1047,12 +1236,10 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     e.stopPropagation();
     selectedItemUrls.clear();
     allItems.forEach(it => {
-      const cb = it.domElements.itemRowElement.querySelector('.guc-item-select-checkbox');
-      if (cb) cb.checked = false;
-      it.domElements.itemRowElement.classList.remove('guc-item-card-selected');
+      updateItemCardButtons(it);
     });
-    document.querySelectorAll('.guc-week-select-all').forEach(cb => cb.checked = false);
     updateSelectedCountUI();
+    updateAllWeekSelectButtons();
   });
 
   // --- Mark / Unmark Selected ---
@@ -1060,13 +1247,13 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     e.preventDefault();
     e.stopPropagation();
     if (selectedItemUrls.size === 0) {
-      showToast("No Selection", "Please check files to mark as downloaded.", null, false, true);
+      showToast("No Selection", "Please select files to mark as downloaded.", null, false, true);
       return;
     }
     allItems.forEach(it => {
       if (selectedItemUrls.has(it.url)) {
         setItemDownloaded(it.url, true, it.filename);
-        updateItemStatusUI(it);
+        updateItemCardButtons(it);
       }
     });
     refreshFilterCountsAndViews();
@@ -1077,13 +1264,13 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     e.preventDefault();
     e.stopPropagation();
     if (selectedItemUrls.size === 0) {
-      showToast("No Selection", "Please check files to unmark.", null, false, true);
+      showToast("No Selection", "Please select files to unmark.", null, false, true);
       return;
     }
     allItems.forEach(it => {
       if (selectedItemUrls.has(it.url)) {
         setItemDownloaded(it.url, false, it.filename);
-        updateItemStatusUI(it);
+        updateItemCardButtons(it);
       }
     });
     refreshFilterCountsAndViews();
@@ -1096,6 +1283,14 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     e.stopPropagation();
     const undownloaded = allItems.filter(it => !isItemDownloaded(it.url));
     requestBulkDownload(undownloaded, `Undownloaded Files`);
+  });
+
+  // --- Download Visible ---
+  panel.querySelector('#guc-download-visible-btn').addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const visibleItems = allItems.filter(it => it.domElements.itemRowElement.style.display !== 'none');
+    requestBulkDownload(visibleItems, `Visible Filtered Files (${visibleItems.length})`);
   });
 
   // --- Download All ---
@@ -1113,53 +1308,19 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     requestBulkDownload(selected, `Selected Files (${selected.length})`);
   });
 
-  // Helper to test if item is a solution
-  const isSolutionItem = (item) => {
-    const t = item.cleanedTitleForFilter;
-    const it = item.itemType;
-    return t.includes('solution') || t.includes('detailedsolution') || it.includes('solution');
-  };
-
-  // Define Category Filters
-  const categories = [
-    {
-      label: 'Lectures',
-      filter: it => (it.itemType.includes('lecture') || it.cleanedTitleForFilter.startsWith('lecture') || it.cleanedTitleForFilter.startsWith('lectures')) && !isSolutionItem(it)
-    },
-    {
-      label: 'Tutorials',
-      filter: it => it.itemType.includes('tutorial') || it.cleanedTitleForFilter.startsWith('tutorial')
-    },
-    {
-      label: 'Labs & Quizzes',
-      filter: it => it.itemType.includes('lab') || it.cleanedTitleForFilter.includes('lab') || it.cleanedTitleForFilter.includes('quiz')
-    },
-    {
-      label: 'Sheets & Exercises',
-      filter: it => (it.cleanedTitleForFilter.includes('sheet') || it.itemType.includes('sheet') || it.itemType.includes('exercise')) && !isSolutionItem(it) && !it.cleanedTitleForFilter.startsWith('lecture') && !it.cleanedTitleForFilter.startsWith('tutorial') && !it.cleanedTitleForFilter.includes('lab')
-    },
-    {
-      label: 'Solutions',
-      filter: it => isSolutionItem(it)
-    },
-    {
-      label: 'Assignments & Projects',
-      filter: it => (it.itemType.includes('assignment') || it.cleanedTitleForFilter.includes('assignment') || it.itemType.includes('project') || it.cleanedTitleForFilter.includes('project')) && !it.cleanedTitleForFilter.startsWith('lecture') && !it.cleanedTitleForFilter.startsWith('tutorial') && !it.cleanedTitleForFilter.includes('lab')
-    }
-  ];
-
+  // --- Quick Category Download Buttons ---
   const catContainer = panel.querySelector('.guc-categories-row');
-  categories.forEach(cat => {
-    const filtered = allItems.filter(cat.filter);
+  uniqueCategories.forEach(cat => {
+    const filtered = allItems.filter(it => it.category === cat);
     if (filtered.length > 0) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'btn btn-outline-primary btn-sm mr-2 mb-2 font-weight-normal shadow-sm';
-      btn.innerHTML = `${cat.label} <span class="badge badge-light border ml-1">${filtered.length}</span>`;
+      btn.className = 'btn btn-outline-primary btn-sm font-weight-normal shadow-sm';
+      btn.innerHTML = `${cat} <span class="badge badge-light border ml-1">${filtered.length}</span>`;
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        requestBulkDownload(filtered, cat.label);
+        requestBulkDownload(filtered, cat);
       });
       catContainer.appendChild(btn);
     }
@@ -1215,25 +1376,71 @@ function injectCustomCSS() {
       margin-left: 8px;
       font-weight: 600;
     }
+    /* Tab Buttons with distinct spacing and border */
     .guc-tab-btn {
-      font-size: 12px !important;
+      font-size: 13px !important;
       font-weight: 600 !important;
-      padding: 5px 12px !important;
-      border-radius: 6px !important;
-      transition: all 0.15s ease !important;
+      padding: 6px 14px !important;
+      border-radius: 8px !important;
+      transition: all 0.2s ease !important;
       cursor: pointer;
     }
-    .guc-item-select-checkbox {
-      width: 17px !important;
-      height: 17px !important;
+    .guc-tab-active {
+      background: #2563eb !important;
+      color: #ffffff !important;
+      border: 1px solid #2563eb !important;
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25) !important;
+    }
+    .guc-tab-inactive {
+      background: #f1f5f9 !important;
+      color: #475569 !important;
+      border: 1px solid #cbd5e1 !important;
+    }
+    .guc-tab-inactive:hover {
+      background: #e2e8f0 !important;
+      color: #1e293b !important;
+    }
+    /* Category Toggle Chips */
+    .guc-cat-toggle-chip {
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      padding: 4px 11px !important;
+      border-radius: 20px !important;
       cursor: pointer;
-      accent-color: #2563eb;
+      transition: all 0.15s ease !important;
+    }
+    .guc-cat-chip-active {
+      background: #eff6ff !important;
+      color: #1d4ed8 !important;
+      border: 1.5px solid #3b82f6 !important;
+    }
+    .guc-cat-chip-active:hover {
+      background: #dbeafe !important;
+    }
+    .guc-cat-chip-inactive {
+      background: #f1f5f9 !important;
+      color: #94a3b8 !important;
+      border: 1.5px dashed #cbd5e1 !important;
+      text-decoration: line-through;
+    }
+    .guc-cat-chip-inactive:hover {
+      background: #e2e8f0 !important;
+      color: #64748b !important;
+    }
+    /* Action Row Buttons */
+    .guc-select-toggle-btn {
+      font-size: 11px !important;
+      font-weight: 600 !important;
+      padding: 4px 10px !important;
+      border-radius: 6px !important;
+      cursor: pointer;
+      transition: all 0.15s ease !important;
       vertical-align: middle;
     }
     .guc-status-toggle-btn {
       font-size: 11px !important;
       font-weight: 600 !important;
-      padding: 4px 9px !important;
+      padding: 4px 10px !important;
       border-radius: 6px !important;
       cursor: pointer;
       transition: all 0.15s ease !important;
@@ -1257,10 +1464,6 @@ function injectCustomCSS() {
       padding: 10px 14px;
       border-radius: 6px;
       word-break: break-all;
-    }
-    .guc-card-header-bar {
-      border-bottom: 1px solid #f1f5f9;
-      padding-bottom: 4px;
     }
   `;
   document.head.appendChild(style);

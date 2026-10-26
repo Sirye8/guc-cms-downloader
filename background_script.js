@@ -1,5 +1,5 @@
 // background_script.js
-// GUC CMS Downloader v3.0.0
+// GUC CMS Downloader v3.3.0
 // Manifest V3 Service Worker (Chrome/Brave) & Background Script (Firefox)
 
 const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
@@ -12,7 +12,7 @@ function downloadSingleFile(itemInfo) {
       const downloadOptions = {
         url: itemInfo.url,
         filename: itemInfo.filename,
-        conflictAction: 'uniquify'
+        conflictAction: itemInfo.conflictAction || 'uniquify'
       };
 
       const result = browserAPI.downloads.download(downloadOptions, (downloadId) => {
@@ -53,7 +53,8 @@ browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.action === "bulkDownloadFiles") {
     const items = request.items || [];
     const tabId = sender && sender.tab ? sender.tab.id : null;
-    console.log(`Bulk download started: ${items.length} items`);
+    const delay = (typeof request.delayMs === 'number') ? request.delayMs : 350;
+    console.log(`Bulk download started: ${items.length} items (throttle: ${delay}ms)`);
 
     (async () => {
       let completedCount = 0;
@@ -84,9 +85,9 @@ browserAPI.runtime.onMessage.addListener((request, sender, sendResponse) => {
           failedCount++;
         }
 
-        // Throttle downloads slightly to prevent browser flood or network dropping
-        if (i < items.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 350));
+        // Throttle downloads to prevent browser flood or network dropping
+        if (i < items.length - 1 && delay > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
 

@@ -1,20 +1,21 @@
 // content_script.js
-// GUC CMS Downloader v3.2.0
+// GUC CMS Downloader v3.3.0
 console.log("GUC CMS Downloader content script loaded");
 
 const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
 
 // --- Storage Keys ---
 const STORAGE_KEY_DOWNLOADED = 'guc_cms_downloaded_items_v2';
-const STORAGE_KEY_FOLDER_SETTINGS = 'guc_cms_folder_settings_v2';
+const STORAGE_KEY_FOLDER_SETTINGS = 'guc_cms_folder_settings_v3';
+const STORAGE_KEY_GENERAL_SETTINGS = 'guc_cms_general_settings_v1';
 const STORAGE_KEY_CATEGORY_FILTERS = 'guc_cms_category_filters_v2';
 
 // --- Folder Organization Settings ---
 function getDefaultFolderSettings() {
   return {
-    enabled: true,
+    enabled: false,
     mainFolder: "GUC CMS",
-    includeWeekFolders: true,
+    includeWeekFolders: false,
     weekFormat: "week_and_date", // "week_and_date", "week_only", "date_only", "none"
     subjectMappings: {} // courseCode -> custom folder name
   };
@@ -23,9 +24,21 @@ function getDefaultFolderSettings() {
 function getFolderSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_FOLDER_SETTINGS);
-    if (!raw) return getDefaultFolderSettings();
-    const parsed = JSON.parse(raw);
-    return Object.assign(getDefaultFolderSettings(), parsed);
+    if (raw) {
+      return Object.assign(getDefaultFolderSettings(), JSON.parse(raw));
+    }
+    // Check if there are subjectMappings from v2 to migrate cleanly
+    const legacyRaw = localStorage.getItem('guc_cms_folder_settings_v2');
+    if (legacyRaw) {
+      const legacy = JSON.parse(legacyRaw);
+      const migrated = getDefaultFolderSettings();
+      if (legacy.subjectMappings) migrated.subjectMappings = legacy.subjectMappings;
+      if (legacy.mainFolder) migrated.mainFolder = legacy.mainFolder;
+      // enabled and includeWeekFolders remain false per user instruction
+      saveFolderSettings(migrated);
+      return migrated;
+    }
+    return getDefaultFolderSettings();
   } catch (e) {
     return getDefaultFolderSettings();
   }
@@ -36,6 +49,36 @@ function saveFolderSettings(settings) {
     localStorage.setItem(STORAGE_KEY_FOLDER_SETTINGS, JSON.stringify(settings));
   } catch (e) {
     console.error("GUC CMS Downloader: Failed to save folder settings", e);
+  }
+}
+
+// --- General Extension Settings ---
+function getDefaultGeneralSettings() {
+  return {
+    downloadDelayMs: 350,
+    conflictAction: 'uniquify', // 'uniquify' | 'overwrite' | 'prompt'
+    autoMarkDownloaded: true,
+    highlightSelectedCards: true,
+    showToasts: true,
+    defaultView: 'all' // 'all' | 'undownloaded'
+  };
+}
+
+function getGeneralSettings() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_GENERAL_SETTINGS);
+    if (!raw) return getDefaultGeneralSettings();
+    return Object.assign(getDefaultGeneralSettings(), JSON.parse(raw));
+  } catch (e) {
+    return getDefaultGeneralSettings();
+  }
+}
+
+function saveGeneralSettings(settings) {
+  try {
+    localStorage.setItem(STORAGE_KEY_GENERAL_SETTINGS, JSON.stringify(settings));
+  } catch (e) {
+    console.error("GUC CMS Downloader: Failed to save general settings", e);
   }
 }
 
@@ -418,6 +461,11 @@ function extractItemDetails(itemElement, weekInfo, courseMeta) {
 
 // --- Modern Non-blocking Toast Notification UI ---
 function showToast(title, message, progress = null, isSuccess = false, isError = false) {
+  const genSettings = getGeneralSettings();
+  if (!genSettings.showToasts && !isError) {
+    return;
+  }
+
   let toastContainer = document.getElementById('guc-cms-toast-container');
   if (!toastContainer) {
     toastContainer = document.createElement('div');
@@ -507,18 +555,23 @@ if (browserAPI && browserAPI.runtime && browserAPI.runtime.onMessage) {
 
 // --- Single & Bulk Download Handlers ---
 async function requestSingleDownload(item) {
+  const genSettings = getGeneralSettings();
   const finalPath = buildDownloadPath(item);
   showToast("Starting Download", item.filename, null, false, false);
-  setItemDownloaded(item.url, true, item.filename);
-  updateItemCardButtons(item);
-  refreshFilterCountsAndViews();
+
+  if (genSettings.autoMarkDownloaded) {
+    setItemDownloaded(item.url, true, item.filename);
+    updateItemCardButtons(item);
+    refreshFilterCountsAndViews();
+  }
 
   try {
     const response = await browserAPI.runtime.sendMessage({
       action: "downloadFile",
       url: item.url,
       filename: finalPath,
-      displayName: item.filename
+      displayName: item.filename,
+      conflictAction: genSettings.conflictAction || 'uniquify'
     });
     if (response && response.success) {
       showToast("Download Started", item.filename, null, true, false);
@@ -537,12 +590,15 @@ async function requestBulkDownload(items, description) {
     return;
   }
 
-  // Mark all as downloaded in local storage
-  items.forEach(it => {
-    setItemDownloaded(it.url, true, it.filename);
-    updateItemCardButtons(it);
-  });
-  refreshFilterCountsAndViews();
+  const genSettings = getGeneralSettings();
+
+  if (genSettings.autoMarkDownloaded) {
+    items.forEach(it => {
+      setItemDownloaded(it.url, true, it.filename);
+      updateItemCardButtons(it);
+    });
+    refreshFilterCountsAndViews();
+  }
 
   showToast(
     `Bulk Download Started`,
@@ -555,14 +611,16 @@ async function requestBulkDownload(items, description) {
   const payload = items.map(it => ({
     url: it.url,
     filename: buildDownloadPath(it),
-    displayName: it.filename
+    displayName: it.filename,
+    conflictAction: genSettings.conflictAction || 'uniquify'
   }));
 
   try {
     const response = await browserAPI.runtime.sendMessage({
       action: "bulkDownloadFiles",
       items: payload,
-      description: description
+      description: description,
+      delayMs: genSettings.downloadDelayMs
     });
     if (!response || !response.success) {
       showToast("Download Failed", "Could not start bulk download.", null, false, true);
@@ -582,6 +640,7 @@ function updateItemCardButtons(item) {
   const dlAnchor = item.domElements.downloadButtonAnchor;
   if (!dlAnchor || !dlAnchor.parentNode) return;
   const parentContainer = dlAnchor.parentNode;
+  const genSettings = getGeneralSettings();
 
   // 1. Select File Button (placed on the action row)
   let selectBtn = parentContainer.querySelector('.guc-select-toggle-btn');
@@ -598,7 +657,9 @@ function updateItemCardButtons(item) {
         row.classList.remove('guc-item-card-selected');
       } else {
         selectedItemUrls.add(item.url);
-        row.classList.add('guc-item-card-selected');
+        if (getGeneralSettings().highlightSelectedCards) {
+          row.classList.add('guc-item-card-selected');
+        }
       }
       updateItemCardButtons(item);
       updateSelectedCountUI();
@@ -612,7 +673,11 @@ function updateItemCardButtons(item) {
     selectBtn.className = 'btn btn-sm btn-primary guc-select-toggle-btn ml-2';
     selectBtn.innerHTML = '<i class="fa fa-check-square mr-1"></i> Selected';
     selectBtn.title = 'Click to deselect';
-    row.classList.add('guc-item-card-selected');
+    if (genSettings.highlightSelectedCards) {
+      row.classList.add('guc-item-card-selected');
+    } else {
+      row.classList.remove('guc-item-card-selected');
+    }
   } else {
     selectBtn.className = 'btn btn-sm btn-outline-secondary guc-select-toggle-btn ml-2';
     selectBtn.innerHTML = '<i class="fa fa-square-o mr-1"></i> Select';
@@ -812,6 +877,10 @@ function processWeeks() {
 
   injectCustomCSS();
   const courseMeta = extractCourseMetadata();
+  const genSettings = getGeneralSettings();
+  if (currentFilterView === 'all') {
+    currentFilterView = genSettings.defaultView || 'all';
+  }
   allDiscoveredItems = [];
 
   // Remove any legacy header bar checkboxes if previously injected
@@ -923,6 +992,7 @@ function addGlobalBulkPanel(allItems, courseMeta) {
   if (existing) existing.remove();
 
   const settings = getFolderSettings();
+  const genSettings = getGeneralSettings();
   const courseKey = courseMeta.courseCode || courseMeta.courseName;
   const currentSubjectFolder = (settings.subjectMappings && settings.subjectMappings[courseKey])
     ? settings.subjectMappings[courseKey]
@@ -943,27 +1013,26 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     <div class="guc-panel-header">
       <div class="guc-panel-title">
         <i class="fa fa-download mr-2"></i> GUC CMS Downloader
-        <span class="guc-badge-ver">v3.2</span>
         <span class="badge badge-secondary ml-2 font-weight-normal">${courseMeta.courseCode}</span>
       </div>
       <div class="d-flex align-items-center flex-wrap mt-2 mt-md-0" style="gap: 8px;">
-        <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-toggle-settings-btn" style="font-size: 12px;">
-          <i class="fa fa-folder-open mr-1"></i> Folder Options
+        <button type="button" class="btn btn-outline-light btn-sm guc-header-btn" id="guc-toggle-folders-btn">
+          <i class="fa fa-folder-open mr-1"></i> Folders
         </button>
-        <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-select-all-btn" style="font-size: 12px;">
-          Select All
+        <button type="button" class="btn btn-outline-light btn-sm guc-header-btn" id="guc-toggle-settings-btn">
+          <i class="fa fa-sliders mr-1"></i> Settings
         </button>
-        <button type="button" class="btn btn-outline-light btn-sm py-1 px-2" id="guc-deselect-all-btn" style="font-size: 12px;">
-          Deselect All
+        <button type="button" class="btn btn-outline-light btn-sm guc-header-btn" id="guc-toggle-info-btn">
+          <i class="fa fa-info-circle mr-1"></i> Info
         </button>
       </div>
     </div>
 
-    <!-- Collapsible Folder Settings Drawer -->
-    <div id="guc-settings-drawer" class="guc-settings-drawer" style="display: none;">
+    <!-- Collapsible Folders Drawer -->
+    <div id="guc-drawer-folders" class="guc-drawer" style="display: none;">
       <div class="d-flex justify-content-between align-items-center mb-3">
-        <strong class="text-dark"><i class="fa fa-sliders mr-1"></i> Download Folder Organization</strong>
-        <span class="small text-muted">All paths are relative to your browser's Downloads folder</span>
+        <strong class="text-dark"><i class="fa fa-folder-open mr-1"></i> Download Folder Organization</strong>
+        <span class="small text-muted">All paths are relative to your browser Downloads folder</span>
       </div>
 
       <div class="row">
@@ -975,7 +1044,7 @@ function addGlobalBulkPanel(allItems, courseMeta) {
               Organize into Folders
             </label>
           </div>
-          <small class="text-muted d-block mb-2">When disabled, all files save directly to Downloads.</small>
+          <small class="text-muted d-block mb-2">When disabled (default), all files save directly to Downloads.</small>
 
           <label class="small font-weight-bold mb-1">Layer 1: Main Root Folder</label>
           <div class="input-group input-group-sm mb-1">
@@ -1021,11 +1090,167 @@ function addGlobalBulkPanel(allItems, courseMeta) {
       </div>
     </div>
 
+    <!-- Collapsible Settings Drawer -->
+    <div id="guc-drawer-settings" class="guc-drawer" style="display: none;">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <strong class="text-dark"><i class="fa fa-sliders mr-1"></i> Extension Settings & Preferences</strong>
+        <span class="small text-muted">Preferences are saved locally in your browser</span>
+      </div>
+
+      <div class="row">
+        <!-- Download Engine -->
+        <div class="col-md-6 mb-3">
+          <h6 class="font-weight-bold text-dark mb-2" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+            <i class="fa fa-download text-primary mr-1"></i> Download Engine
+          </h6>
+
+          <div class="form-group mb-3">
+            <label class="small font-weight-bold mb-1" for="guc-setting-delay">Download Queue Throttle (Delay)</label>
+            <div class="input-group input-group-sm">
+              <input type="number" id="guc-setting-delay" class="form-control" min="50" max="3000" step="50" value="${genSettings.downloadDelayMs}">
+              <div class="input-group-append">
+                <span class="input-group-text">ms</span>
+              </div>
+            </div>
+            <small class="text-muted">Pause between consecutive downloads (default: 350ms) to prevent browser throttling.</small>
+          </div>
+
+          <div class="form-group mb-3">
+            <label class="small font-weight-bold mb-1" for="guc-setting-conflict">File Conflict Action</label>
+            <select id="guc-setting-conflict" class="custom-select custom-select-sm">
+              <option value="uniquify" ${genSettings.conflictAction === 'uniquify' ? 'selected' : ''}>Uniquify (Append (1), (2) - Default)</option>
+              <option value="overwrite" ${genSettings.conflictAction === 'overwrite' ? 'selected' : ''}>Overwrite existing file</option>
+              <option value="prompt" ${genSettings.conflictAction === 'prompt' ? 'selected' : ''}>Prompt / ask where to save</option>
+            </select>
+            <small class="text-muted">Action when a file with identical name exists in the folder.</small>
+          </div>
+
+          <div class="form-group mb-2">
+            <label class="small font-weight-bold mb-1" for="guc-setting-default-view">Default Filter View on Load</label>
+            <select id="guc-setting-default-view" class="custom-select custom-select-sm">
+              <option value="all" ${genSettings.defaultView === 'all' ? 'selected' : ''}>All Files</option>
+              <option value="undownloaded" ${genSettings.defaultView === 'undownloaded' ? 'selected' : ''}>Undownloaded Only</option>
+            </select>
+            <small class="text-muted">Initial file tab selected when visiting a course page.</small>
+          </div>
+        </div>
+
+        <!-- UI & Automation Controls -->
+        <div class="col-md-6 mb-3">
+          <h6 class="font-weight-bold text-dark mb-2" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+            <i class="fa fa-desktop text-primary mr-1"></i> Interface & Behavior
+          </h6>
+
+          <div class="custom-control custom-switch mb-3">
+            <input type="checkbox" class="custom-control-input" id="guc-setting-auto-mark" ${genSettings.autoMarkDownloaded ? 'checked' : ''}>
+            <label class="custom-control-label small font-weight-bold" for="guc-setting-auto-mark" style="cursor: pointer;">
+              Auto-mark files as downloaded
+            </label>
+            <small class="text-muted d-block">Automatically set downloaded status when downloading through extension.</small>
+          </div>
+
+          <div class="custom-control custom-switch mb-3">
+            <input type="checkbox" class="custom-control-input" id="guc-setting-highlight-cards" ${genSettings.highlightSelectedCards ? 'checked' : ''}>
+            <label class="custom-control-label small font-weight-bold" for="guc-setting-highlight-cards" style="cursor: pointer;">
+              Highlight selected item cards
+            </label>
+            <small class="text-muted d-block">Add an active border and soft blue tint to selected course items.</small>
+          </div>
+
+          <div class="custom-control custom-switch mb-3">
+            <input type="checkbox" class="custom-control-input" id="guc-setting-show-toasts" ${genSettings.showToasts ? 'checked' : ''}>
+            <label class="custom-control-label small font-weight-bold" for="guc-setting-show-toasts" style="cursor: pointer;">
+              Show toast notifications
+            </label>
+            <small class="text-muted d-block">Display floating progress cards in bottom right corner during downloads.</small>
+          </div>
+
+          <div class="pt-2 border-top mt-3">
+            <label class="small font-weight-bold text-danger mb-1">Storage & Reset Actions</label>
+            <div class="d-flex flex-wrap" style="gap: 8px;">
+              <button type="button" class="btn btn-outline-danger btn-sm" id="guc-clear-history-btn">
+                <i class="fa fa-trash mr-1"></i> Clear Download History
+              </button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-reset-defaults-btn">
+                <i class="fa fa-undo mr-1"></i> Reset All Settings
+              </button>
+            </div>
+            <small class="text-muted d-block mt-1">Clearing history resets downloaded checkmarks. Reset restores original defaults.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Collapsible Info Drawer -->
+    <div id="guc-drawer-info" class="guc-drawer" style="display: none;">
+      <div class="d-flex justify-content-between align-items-center flex-wrap pb-2 mb-3 border-bottom">
+        <div class="d-flex align-items-center flex-wrap">
+          <h5 class="mb-0 font-weight-bold text-dark mr-2" style="font-size: 15px;">GUC CMS Downloader</h5>
+          <span class="badge badge-primary mr-2" style="font-size: 11px; padding: 4px 8px;">v3.3.0</span>
+          <span class="badge badge-secondary mr-2" style="font-size: 11px;">Manifest V3</span>
+          <span class="badge badge-light border text-muted" style="font-size: 11px;">Firefox &bull; Brave &bull; Chrome</span>
+        </div>
+        <div class="text-muted small mt-1 mt-md-0">
+          <a href="https://github.com/Sirye8/guc-cms-downloader" target="_blank" rel="noopener noreferrer" class="text-primary font-weight-bold" style="text-decoration: none;">
+            <i class="fa fa-github mr-1"></i> GitHub Repository
+          </a>
+        </div>
+      </div>
+
+      <div class="row">
+        <!-- What it does & How it works -->
+        <div class="col-md-7 mb-3">
+          <h6 class="font-weight-bold text-dark mb-2" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+            <i class="fa fa-bullseye text-primary mr-1"></i> What It Does
+          </h6>
+          <p class="small text-muted mb-3" style="line-height: 1.5;">
+            GUC CMS Downloader is an open-source browser extension designed for students at the German University in Cairo. Material links on the CMS typically download with long server hashes (e.g. <code>GUC_576_70_73059_2026-10-12T13_26_21.pdf</code>), requiring tedious manual renaming across weekly cards. This extension automates clean renaming, categorizes all materials, and offers bulk downloading with optional folder organization.
+          </p>
+
+          <h6 class="font-weight-bold text-dark mb-2" style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+            <i class="fa fa-cogs text-primary mr-1"></i> How It Works
+          </h6>
+          <ul class="small text-muted pl-3 mb-0" style="line-height: 1.6;">
+            <li><strong>Smart Categorization:</strong> Automatically sorts course items into Lectures, Tutorials, Labs, Sheets, Solutions, Assignments, and Projects.</li>
+            <li><strong>Topic-Preserving Renaming:</strong> Strips leading index prefixes while retaining the complete lecture or sheet subtitle and correct file extension.</li>
+            <li><strong>Multi-Layer Routing:</strong> Optionally arranges files into custom root, course, and week subfolders inside your Downloads folder.</li>
+            <li><strong>Persistent Download Tracking:</strong> Remembers which files you already downloaded across sessions using local storage.</li>
+          </ul>
+        </div>
+
+        <!-- Quick Tips & Credits -->
+        <div class="col-md-5 mb-3">
+          <div class="p-3 rounded mb-3" style="background: #ffffff; border: 1px solid #e2e8f0;">
+            <h6 class="font-weight-bold text-dark mb-2" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+              <i class="fa fa-lightbulb-o text-warning mr-1"></i> Quick Tips
+            </h6>
+            <ul class="small text-muted pl-3 mb-0" style="line-height: 1.5;">
+              <li>Use <strong>Category Chips</strong> to show or hide specific content types.</li>
+              <li>Click <strong>Download Undownloaded</strong> to get newly posted files quickly.</li>
+              <li>Use <strong>Select Week</strong> in any week header to batch download that week.</li>
+              <li>Configure queue delays and conflict options in the <strong>Settings</strong> menu.</li>
+            </ul>
+          </div>
+
+          <div class="p-3 rounded" style="background: #ffffff; border: 1px solid #e2e8f0;">
+            <h6 class="font-weight-bold text-dark mb-1" style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+              <i class="fa fa-code-fork text-success mr-1"></i> Credits & License
+            </h6>
+            <div class="small text-muted" style="line-height: 1.5;">
+              Created by <strong>Sirye8</strong> for GUC students.<br>
+              Open source under the <strong>GPL-3.0 License</strong>.<br>
+              Contributions and issues welcome on GitHub.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Main Panel Content -->
     <div class="card-body" style="padding: 16px 20px;">
-      <!-- Segmented View Tabs (All / Undownloaded / Downloaded) with clean spacing -->
+      <!-- Segmented View Tabs (All / Undownloaded / Downloaded) & Selection Tools -->
       <div class="d-flex justify-content-between align-items-center flex-wrap mb-3">
-        <div class="d-flex align-items-center flex-wrap guc-tabs-container mb-2 mb-md-0" style="gap: 10px;">
+        <div class="d-flex align-items-center flex-wrap guc-tabs-container mb-2 mb-md-0" style="gap: 8px;">
           <button type="button" class="btn btn-sm guc-tab-btn guc-tab-active" id="guc-tab-all">
             All Files (<span class="guc-count-all">${allItems.length}</span>)
           </button>
@@ -1037,14 +1262,24 @@ function addGlobalBulkPanel(allItems, courseMeta) {
           </button>
         </div>
 
-        <!-- Batch Selection Actions -->
-        <div class="d-flex align-items-center flex-wrap" style="gap: 8px;">
-          <button type="button" class="btn btn-outline-success btn-sm" id="guc-mark-selected-btn">
-            <i class="fa fa-check-circle mr-1"></i> Mark Selected
-          </button>
-          <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-unmark-selected-btn">
-            <i class="fa fa-circle-o mr-1"></i> Unmark Selected
-          </button>
+        <!-- Unified Selection & Batch Actions Toolbar -->
+        <div class="d-flex align-items-center flex-wrap guc-selection-tools" style="gap: 8px;">
+          <div class="btn-group btn-group-sm mr-1" role="group">
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-select-all-btn" title="Select all visible files in current view">
+              <i class="fa fa-check-square mr-1"></i> Select All
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-deselect-all-btn" title="Clear all selections">
+              <i class="fa fa-square-o mr-1"></i> Deselect All
+            </button>
+          </div>
+          <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn btn-outline-success btn-sm" id="guc-mark-selected-btn" title="Mark selected files as downloaded">
+              <i class="fa fa-check-circle mr-1"></i> Mark Selected
+            </button>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="guc-unmark-selected-btn" title="Unmark selected files">
+              <i class="fa fa-circle-o mr-1"></i> Unmark Selected
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1092,9 +1327,54 @@ function addGlobalBulkPanel(allItems, courseMeta) {
     </div>
   `;
 
+  // --- Drawer Accordion Controller ---
+  const drawers = {
+    folders: { el: panel.querySelector('#guc-drawer-folders'), btn: panel.querySelector('#guc-toggle-folders-btn') },
+    settings: { el: panel.querySelector('#guc-drawer-settings'), btn: panel.querySelector('#guc-toggle-settings-btn') },
+    info: { el: panel.querySelector('#guc-drawer-info'), btn: panel.querySelector('#guc-toggle-info-btn') }
+  };
+
+  function toggleDrawer(drawerName) {
+    const target = drawers[drawerName];
+    if (!target || !target.el) return;
+
+    const isCurrentlyOpen = target.el.style.display !== 'none';
+
+    // Close all drawers
+    Object.values(drawers).forEach(d => {
+      if (d.el) d.el.style.display = 'none';
+      if (d.btn) d.btn.classList.remove('active');
+    });
+
+    // If it was closed, open it now
+    if (!isCurrentlyOpen) {
+      target.el.style.display = 'block';
+      target.btn.classList.add('active');
+      if (drawerName === 'folders') {
+        updatePreview();
+      }
+    }
+  }
+
+  drawers.folders.btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleDrawer('folders');
+  });
+
+  drawers.settings.btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleDrawer('settings');
+  });
+
+  drawers.info.btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleDrawer('info');
+  });
+
   // --- Folder Settings Event Handlers ---
-  const drawer = panel.querySelector('#guc-settings-drawer');
-  const toggleSettingsBtn = panel.querySelector('#guc-toggle-settings-btn');
   const mainFolderInput = panel.querySelector('#guc-main-folder-input');
   const subjectFolderInput = panel.querySelector('#guc-subject-folder-input');
   const resetSubjectBtn = panel.querySelector('#guc-reset-subject-btn');
@@ -1111,18 +1391,13 @@ function addGlobalBulkPanel(allItems, courseMeta) {
       weekDate: "2026-09-07",
       weekTitle: "Week 1 (2026-09-07)"
     };
-    const path = buildDownloadPath(mockItem);
-    previewBox.textContent = `Downloads / ${path}`;
+    if (!curSettings.enabled) {
+      previewBox.textContent = `Downloads / ${mockItem.filename} (Flat - folder organization disabled)`;
+    } else {
+      const path = buildDownloadPath(mockItem);
+      previewBox.textContent = `Downloads / ${path}`;
+    }
   }
-
-  toggleSettingsBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const isHidden = drawer.style.display === 'none';
-    drawer.style.display = isHidden ? 'block' : 'none';
-    toggleSettingsBtn.classList.toggle('active', isHidden);
-    if (isHidden) updatePreview();
-  });
 
   enableFoldersCb.addEventListener('change', () => {
     const cur = getFolderSettings();
@@ -1174,6 +1449,116 @@ function addGlobalBulkPanel(allItems, courseMeta) {
 
   updatePreview();
 
+  // --- General Settings Event Handlers ---
+  const delayInput = panel.querySelector('#guc-setting-delay');
+  if (delayInput) {
+    delayInput.addEventListener('change', () => {
+      let val = parseInt(delayInput.value, 10);
+      if (isNaN(val) || val < 0) val = 0;
+      if (val > 10000) val = 10000;
+      delayInput.value = val;
+      const cur = getGeneralSettings();
+      cur.downloadDelayMs = val;
+      saveGeneralSettings(cur);
+    });
+  }
+
+  const conflictSelect = panel.querySelector('#guc-setting-conflict');
+  if (conflictSelect) {
+    conflictSelect.addEventListener('change', () => {
+      const cur = getGeneralSettings();
+      cur.conflictAction = conflictSelect.value;
+      saveGeneralSettings(cur);
+    });
+  }
+
+  const defaultViewSelect = panel.querySelector('#guc-setting-default-view');
+  if (defaultViewSelect) {
+    defaultViewSelect.addEventListener('change', () => {
+      const cur = getGeneralSettings();
+      cur.defaultView = defaultViewSelect.value;
+      saveGeneralSettings(cur);
+    });
+  }
+
+  const autoMarkCb = panel.querySelector('#guc-setting-auto-mark');
+  if (autoMarkCb) {
+    autoMarkCb.addEventListener('change', () => {
+      const cur = getGeneralSettings();
+      cur.autoMarkDownloaded = autoMarkCb.checked;
+      saveGeneralSettings(cur);
+    });
+  }
+
+  const highlightCardsCb = panel.querySelector('#guc-setting-highlight-cards');
+  if (highlightCardsCb) {
+    highlightCardsCb.addEventListener('change', () => {
+      const cur = getGeneralSettings();
+      cur.highlightSelectedCards = highlightCardsCb.checked;
+      saveGeneralSettings(cur);
+      allItems.forEach(it => updateItemCardButtons(it));
+    });
+  }
+
+  const showToastsCb = panel.querySelector('#guc-setting-show-toasts');
+  if (showToastsCb) {
+    showToastsCb.addEventListener('change', () => {
+      const cur = getGeneralSettings();
+      cur.showToasts = showToastsCb.checked;
+      saveGeneralSettings(cur);
+    });
+  }
+
+  const clearHistoryBtn = panel.querySelector('#guc-clear-history-btn');
+  if (clearHistoryBtn) {
+    clearHistoryBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirm("Are you sure you want to clear all download history records? This cannot be undone.")) {
+        localStorage.removeItem(STORAGE_KEY_DOWNLOADED);
+        allItems.forEach(it => updateItemCardButtons(it));
+        refreshFilterCountsAndViews();
+        showToast("History Cleared", "Cleared all download history records.", null, true, false);
+      }
+    });
+  }
+
+  const resetDefaultsBtn = panel.querySelector('#guc-reset-defaults-btn');
+  if (resetDefaultsBtn) {
+    resetDefaultsBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirm("Reset all folder settings and preferences to default?")) {
+        localStorage.removeItem(STORAGE_KEY_FOLDER_SETTINGS);
+        localStorage.removeItem(STORAGE_KEY_GENERAL_SETTINGS);
+
+        const newFold = getFolderSettings();
+        const newGen = getGeneralSettings();
+
+        // Update Folders UI
+        enableFoldersCb.checked = newFold.enabled;
+        mainFolderInput.value = newFold.mainFolder;
+        subjectFolderInput.value = courseMeta.defaultFolder;
+        weekFoldersCb.checked = newFold.includeWeekFolders;
+        weekFormatSelect.value = newFold.weekFormat;
+        weekFormatSelect.disabled = !newFold.includeWeekFolders;
+        updatePreview();
+
+        // Update Settings UI
+        delayInput.value = newGen.downloadDelayMs;
+        conflictSelect.value = newGen.conflictAction;
+        defaultViewSelect.value = newGen.defaultView;
+        autoMarkCb.checked = newGen.autoMarkDownloaded;
+        highlightCardsCb.checked = newGen.highlightSelectedCards;
+        showToastsCb.checked = newGen.showToasts;
+
+        allItems.forEach(it => updateItemCardButtons(it));
+        refreshFilterCountsAndViews();
+        showToast("Settings Reset", "Restored all settings to default.", null, true, false);
+      }
+    });
+  }
+
   // --- Filter View Tabs ---
   panel.querySelector('#guc-tab-all').addEventListener('click', (e) => {
     e.preventDefault();
@@ -1220,26 +1605,35 @@ function addGlobalBulkPanel(allItems, courseMeta) {
   panel.querySelector('#guc-select-all-btn').addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    let count = 0;
     allItems.forEach(it => {
-      // Only select visible items if filtered
+      // Only select visible items based on current filters
       if (it.domElements.itemRowElement.style.display !== 'none') {
         selectedItemUrls.add(it.url);
         updateItemCardButtons(it);
+        count++;
       }
     });
     updateSelectedCountUI();
     updateAllWeekSelectButtons();
+    if (count > 0) {
+      showToast("Selected All Visible", `Selected ${count} visible files.`, null, true, false);
+    }
   });
 
   panel.querySelector('#guc-deselect-all-btn').addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    const prevCount = selectedItemUrls.size;
     selectedItemUrls.clear();
     allItems.forEach(it => {
       updateItemCardButtons(it);
     });
     updateSelectedCountUI();
     updateAllWeekSelectButtons();
+    if (prevCount > 0) {
+      showToast("Cleared Selection", "Deselected all files.", null, false, false);
+    }
   });
 
   // --- Mark / Unmark Selected ---
@@ -1451,10 +1845,35 @@ function injectCustomCSS() {
       background-color: #f8faff !important;
       box-shadow: 0 2px 8px rgba(37, 99, 235, 0.1) !important;
     }
-    .guc-settings-drawer {
-      background: #f8fafc;
-      border-top: 1px solid #e2e8f0;
-      padding: 16px 20px;
+    .guc-header-btn {
+      font-size: 12px !important;
+      font-weight: 500 !important;
+      border-color: rgba(255, 255, 255, 0.35) !important;
+      color: #f1f5f9 !important;
+      border-radius: 6px !important;
+      transition: all 0.15s ease !important;
+    }
+    .guc-header-btn:hover {
+      background: rgba(255, 255, 255, 0.18) !important;
+      border-color: rgba(255, 255, 255, 0.7) !important;
+      color: #ffffff !important;
+    }
+    .guc-header-btn.active {
+      background: #ffffff !important;
+      color: #0f172a !important;
+      border-color: #ffffff !important;
+      font-weight: 600 !important;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+    }
+    .guc-drawer {
+      background: #f8fafc !important;
+      border-top: 1px solid #e2e8f0 !important;
+      padding: 16px 20px !important;
+      animation: gucDrawerFadeIn 0.2s ease-in-out;
+    }
+    @keyframes gucDrawerFadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
     }
     .guc-live-preview-box {
       background: #0f172a;

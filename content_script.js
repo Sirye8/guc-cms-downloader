@@ -1,5 +1,5 @@
 // content_script.js
-// GUC CMS Downloader v3.3.0
+// GUC CMS Downloader v3.3.1
 console.log("GUC CMS Downloader content script loaded");
 
 const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null);
@@ -216,14 +216,28 @@ function getAbsoluteUrl(hrefOrDataUrl) {
 function isSolutionItem(title, itemType) {
   const t = (title || "").toLowerCase();
   const it = (itemType || "").toLowerCase();
-  return (
-    t.includes('solution') ||
-    t.includes('detailedsolution') ||
-    t.includes('model answer') ||
+
+  // If itemType explicitly indicates a solution or model answer
+  if (
     it.includes('solution') ||
     it.includes('model answer') ||
     it.includes('quiz solution') ||
     it.includes('exam solution')
+  ) {
+    return true;
+  }
+
+  // Strip academic topic occurrences of "solution" (e.g. "graphical solution", "numerical solution")
+  // These represent subjects being taught rather than answer keys or model answers
+  const topicalPattern = /\b(graphical|numerical|analytical|solid|buffer|feasible|basic|optimal|approximate|exact|closed[-\s]?form|general|particular|aqueous|chemical)\s+solutions?\b|\bsolution\s+spaces?\b/gi;
+  const tClean = t.replace(topicalPattern, '');
+
+  return (
+    tClean.includes('model answer') ||
+    tClean.includes('detailedsolution') ||
+    tClean.includes('detailed solution') ||
+    tClean.includes('solution') ||
+    tClean.includes('solved')
   );
 }
 
@@ -1186,7 +1200,7 @@ function addGlobalBulkPanel(allItems, courseMeta) {
       <div class="d-flex justify-content-between align-items-center flex-wrap pb-2 mb-3 border-bottom">
         <div class="d-flex align-items-center flex-wrap">
           <h5 class="mb-0 font-weight-bold text-dark mr-2" style="font-size: 15px;">GUC CMS Downloader</h5>
-          <span class="badge badge-primary mr-2" style="font-size: 11px; padding: 4px 8px;">v3.3.0</span>
+          <span class="badge badge-primary mr-2" style="font-size: 11px; padding: 4px 8px;">v3.3.1</span>
           <span class="badge badge-secondary mr-2" style="font-size: 11px;">Manifest V3</span>
           <span class="badge badge-light border text-muted" style="font-size: 11px;">Firefox &bull; Brave &bull; Chrome</span>
         </div>

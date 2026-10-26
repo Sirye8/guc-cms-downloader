@@ -1,5 +1,5 @@
 // background_script.js
-// GUC CMS Downloader v3.3.0
+// GUC CMS Downloader v3.3.1
 // Manifest V3 Service Worker (Chrome/Brave) & Background Script (Firefox)
 
 const browserAPI = (typeof browser !== 'undefined' && browser.runtime) ? browser : (typeof chrome !== 'undefined' ? chrome : null);

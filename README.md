@@ -1,6 +1,6 @@
 # GUC CMS Downloader
 
-[![Version](https://img.shields.io/badge/version-3.3.0-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
+[![Version](https://img.shields.io/badge/version-3.3.1-blue.svg)](https://github.com/Sirye8/guc-cms-downloader/releases)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Browser Support](https://img.shields.io/badge/browsers-Firefox%20%7C%20Brave%20%7C%20Chrome-orange.svg)](https://github.com/Sirye8/guc-cms-downloader)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-yellow.svg)](LICENSE)
@@ -11,7 +11,7 @@ On the GUC CMS, downloaded files normally have raw server timestamps and hashes 
 
 ---
 
-## Features (v3.3)
+## Features (v3.3.1)
 
 ### Expanding Accordion Drawers
 The top bar features three collapsible drawers that open smoothly without cluttering the page:

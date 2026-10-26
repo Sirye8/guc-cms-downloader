@@ -94,22 +94,12 @@ GUC CMS Downloader v3.3 runs on Manifest V3 and supports Firefox, Brave, and Goo
 
 ---
 
-### Brave Browser
+### Chromium Browsers (Brave, Google Chrome, Edge, Opera, etc.)
 
 1. Download `guc-cms-downloader.zip` from [Releases](https://github.com/Sirye8/guc-cms-downloader/releases/latest) and unzip it.
-2. Open Brave and go to `brave://extensions`.
+2. Open your browser extensions page (`brave://extensions` in Brave, `chrome://extensions` in Chrome, `edge://extensions` in Edge).
 3. Turn on **Developer mode** (top-right toggle).
 4. Click **Load unpacked** (top-left button).
-5. Select the unzipped folder containing `manifest.json`.
-
----
-
-### Google Chrome & Other Chromium Browsers (Edge, Opera, etc.)
-
-1. Download `guc-cms-downloader.zip` from [Releases](https://github.com/Sirye8/guc-cms-downloader/releases/latest) and unzip it.
-2. Open Chrome and go to `chrome://extensions`.
-3. Turn on **Developer mode** (top-right toggle).
-4. Click **Load unpacked**.
 5. Select the unzipped folder containing `manifest.json`.
 
 ---
